@@ -1,0 +1,17 @@
+{
+    "version": 8,
+    "configurePresets": [
+        {
+            "name": "Pico",
+            "displayName": "Pico",
+            "description": "Using compilers: C = /Users/gaurav/.pico-sdk/toolchain/15_2_Rel1/bin/arm-none-eabi-gcc, CXX = /Users/gaurav/.pico-sdk/toolchain/15_2_Rel1/bin/arm-none-eabi-g++",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_C_COMPILER": "/Users/gaurav/.pico-sdk/toolchain/15_2_Rel1/bin/arm-none-eabi-gcc",
+                "CMAKE_CXX_COMPILER": "/Users/gaurav/.pico-sdk/toolchain/15_2_Rel1/bin/arm-none-eabi-g++",
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        }
+    ]
+}

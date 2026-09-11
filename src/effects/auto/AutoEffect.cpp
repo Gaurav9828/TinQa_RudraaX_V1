@@ -17,8 +17,6 @@ void AutoEffect::init() {
     m_aurora_delegate.init();
     m_thunder_delegate.init();
     m_effect_temp_buffer.clear();
-    
-    syncWithSystemTime();
 }
 
 void AutoEffect::syncWithSystemTime() {
@@ -71,17 +69,9 @@ float AutoEffect::calculateMoonPhaseFactor() const {
 }
 
 void AutoEffect::update(uint32_t delta_ms) {
-    double target_hyperlapse_seconds = Config::HYPERLAPSE_DAY_DURATION_MINUTES * 60.0;
-    if (target_hyperlapse_seconds <= 0.0) target_hyperlapse_seconds = 600.0; 
 
-    double speed_multiplier = 86400.0 / target_hyperlapse_seconds;
-    m_simulated_seconds += (delta_ms / 1000.0) * speed_multiplier;
-
-    if (m_simulated_seconds >= 86400.0) {
-        m_simulated_seconds -= 86400.0;
-        m_day_of_year++;
-        if (m_day_of_year > 365) m_day_of_year = 1;
-    }
+    // Time is controlled centrally by VirtualClock in main.cpp.
+    // AutoEffect must never advance its own clock.
 
     m_sunrise_delegate.update(delta_ms);
     m_aurora_delegate.update(delta_ms);

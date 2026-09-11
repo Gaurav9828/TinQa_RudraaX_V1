@@ -11,7 +11,7 @@ class TouchTest {
 public:
     static void run(TouchDriver& touch, WifiWsServer& wsServer) {
         printf("\n===================================================\n");
-        printf("   SUMMIT-X FIRMWARE: TOUCH & STREAM TEST RUNNER   \n");
+        printf("   Rudraa-X FIRMWARE: TOUCH & STREAM TEST RUNNER   \n");
         printf("===================================================\n");
         printf("[INIT] Target FPS: %u (Interval: %u ms)\n", Config::TARGET_FPS, Config::FRAME_INTERVAL_MS);
         printf("[INIT] Touch Sensors: GP%u (Pad 1) | GP%u (Pad 2)\n", Config::Pins::TOUCH_PAD_1, Config::Pins::TOUCH_PAD_2);

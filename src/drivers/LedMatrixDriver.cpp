@@ -19,13 +19,37 @@ bool LedMatrixDriver::init() {
 }
 
 inline uint16_t LedMatrixDriver::getPhysicalIndex(uint16_t x, uint16_t y) const {
-    const uint16_t panelX = x / Config::PANEL_SIZE;
-    const uint16_t panelY = y / Config::PANEL_SIZE;
+    // 1. Apply Master / Global Matrix Rotation across the full 32x32 layout
+    uint16_t gx = x;
+    uint16_t gy = y;
+
+    switch (Config::GLOBAL_PANEL_ROTATION) {
+        case DEG_90:
+            gx = Config::MATRIX_HEIGHT - 1 - y;
+            gy = x;
+            break;
+        case DEG_180:
+            gx = Config::MATRIX_WIDTH - 1 - x;
+            gy = Config::MATRIX_HEIGHT - 1 - y;
+            break;
+        case DEG_270:
+            gx = y;
+            gy = Config::MATRIX_WIDTH - 1 - x;
+            break;
+        case DEG_0:
+        default:
+            break;
+    }
+
+    // 2. Identify panel coordinates in grid (2x2 grid for 32x32 matrix)
+    const uint16_t panelX = gx / Config::PANEL_SIZE;
+    const uint16_t panelY = gy / Config::PANEL_SIZE;
     const uint16_t panelIndex = panelY * Config::PANELS_X + panelX;
 
-    const uint16_t localX = x % Config::PANEL_SIZE;
-    const uint16_t localY = y % Config::PANEL_SIZE;
+    const uint16_t localX = gx % Config::PANEL_SIZE;
+    const uint16_t localY = gy % Config::PANEL_SIZE;
 
+    // 3. Apply individual per-panel orientation
     const PanelRotation rotation = Config::PANEL_ROTATIONS[panelIndex];
     uint16_t rx = localX;
     uint16_t ry = localY;
@@ -48,6 +72,7 @@ inline uint16_t LedMatrixDriver::getPhysicalIndex(uint16_t x, uint16_t y) const 
             break;
     }
 
+    // 4. Handle serpentine (zigzag) wiring inside individual 16x16 panels
     if (rx & 1) {
         ry = Config::PANEL_SIZE - 1 - ry;
     }

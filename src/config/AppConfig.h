@@ -12,8 +12,9 @@ enum AppState : uint8_t
     STATE_THUNDER = 1,
     STATE_AURORA = 2,
     STATE_SUNRISE = 3,
-    STATE_AUTO = 4,
-    STATE_TEST = 5
+    STATE_SUNSET = 4,
+    STATE_AUTO = 5,
+    STATE_TEST = 6
 };
 
 enum PanelRotation : uint16_t {
@@ -29,7 +30,7 @@ namespace Config
     inline constexpr bool TEST_MODE = (TEST_MODE_ENABLED == 1);
     
     // Default boot state set to STATE_TEST for initial panel orientation checking
-    inline constexpr AppState INITIAL_APP_STATE = STATE_TEST;
+    inline constexpr AppState INITIAL_APP_STATE = STATE_AURORA;
 
     // Display Matrix Configuration (32x32 = 4 Panels, 64x64 = 16 Panels, etc.)
     inline constexpr uint16_t MATRIX_WIDTH  = 32;
@@ -49,7 +50,9 @@ namespace Config
         DEG_0     // Panel 4 (Bottom-Right)
     };
 
-    inline constexpr uint8_t DEFAULT_BRIGHTNESS = 35; 
+    inline constexpr PanelRotation GLOBAL_PANEL_ROTATION = DEG_90; // DEG_0, DEG_90, DEG_180, DEG_270
+
+    inline constexpr uint8_t DEFAULT_BRIGHTNESS = 155; 
     inline constexpr uint8_t BRIGHTNESS = DEFAULT_BRIGHTNESS;    
 
     inline constexpr uint32_t TARGET_FPS = 10; 
@@ -61,12 +64,13 @@ namespace Config
     constexpr double HYPERLAPSE_DAY_DURATION_MINUTES = 1.0;
     inline constexpr bool HYPERLAPSE = true;
 
-    inline constexpr float DEFAULT_START_HOUR_24 = 6.0f;
+    inline constexpr float DEFAULT_START_HOUR_24 = 5.0f;
 
-    inline constexpr float SUNRISE_DURATION_MINUTES = 1.0f;
-    inline constexpr float EAST_DIRECTION_DEGREES = 135.0f;
+    inline constexpr float SUNRISE_DURATION_MINUTES = 5.0f;
+    inline constexpr float EAST_DIRECTION_DEGREES = 180.0f;
 
-    inline const std::vector<size_t> SUNRISE_PEAK_INDICES = {150, 600, 813};
+    inline const std::vector<size_t> SUNRISE_PEAK_INDICES = {1023};
+    inline const std::vector<size_t> SUNSET_END_PEAK_INDICES = {992};
 
     inline constexpr bool IS_BRIGHTNESS_SENSOR_AVAILABLE = true;
     inline constexpr bool IS_EXHAUST_FAN_AVAILABLE = true;

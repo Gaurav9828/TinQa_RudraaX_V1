@@ -1,39 +1,40 @@
-#include "effects/sunrise/SunriseEffect.h"
+#include "effects/sunset/SunsetEffect.h"
 #include <cmath>
 #include <algorithm>
 
-SunriseEffect::SunriseEffect() {
+SunsetEffect::SunsetEffect() {
     init();
 }
 
-void SunriseEffect::init() {
-    m_progress = 0.0f;
+void SunsetEffect::init() {
+    m_progress = 1.0f; // Starts at 1.0 (Full Warm Daylight matching Sunrise end)
     parseConfig();
 }
 
-void SunriseEffect::parseConfig() {
-    m_peak_coordinates.clear();
-    for (size_t idx : Config::SUNRISE_PEAK_INDICES) {
+void SunsetEffect::parseConfig() {
+    m_end_coordinates.clear();
+    for (size_t idx : Config::SUNSET_END_PEAK_INDICES) {
         size_t x = idx % Config::MATRIX_WIDTH;
         size_t y = idx / Config::MATRIX_WIDTH;
-        m_peak_coordinates.push_back({x, y});
+        m_end_coordinates.push_back({x, y});
     }
-    updateDirectionVector(Config::EAST_DIRECTION_DEGREES);
+    updateDirectionVector(Config::EAST_DIRECTION_DEGREES - 180.0f);
 }
 
-void SunriseEffect::updateDirectionVector(float direction_degrees) {
+void SunsetEffect::updateDirectionVector(float direction_degrees) {
     float radians = direction_degrees * (Config::PI / 180.0f);
     m_sun_direction_x = std::cos(radians);
     m_sun_direction_y = -std::sin(radians); 
 }
 
-float SunriseEffect::clampf(float val, float min_val, float max_val) {
+float SunsetEffect::clampf(float val, float min_val, float max_val) {
     return std::max(min_val, std::min(max_val, val));
 }
 
-SunriseEffect::ColorRGB SunriseEffect::getAlpenglowColor(float phase) const {
+SunsetEffect::ColorRGB SunsetEffect::getSunsetColor(float phase) const {
     phase = clampf(phase, 0.0f, 1.0f);
 
+    // Exact matching palette with SunriseEffect
     const ColorRGB COLOR_OFF           = {  0.0f,   0.0f,   0.0f};
     const ColorRGB COLOR_DEEP_RED      = {220.0f,  15.0f,   0.0f}; 
     const ColorRGB COLOR_GOLDEN_RED    = {255.0f,  65.0f,   0.0f}; 
@@ -44,59 +45,51 @@ SunriseEffect::ColorRGB SunriseEffect::getAlpenglowColor(float phase) const {
     if (phase <= 0.01f) {
         return COLOR_OFF;
     } 
-    else if (phase < 0.20f) {
-        float t = phase / 0.20f;
+    else if (phase < 0.15f) {
+        float t = (phase - 0.01f) / 0.14f;
         return {
             COLOR_DEEP_RED.r * t,
             COLOR_DEEP_RED.g * t,
             COLOR_DEEP_RED.b * t
         };
-    } 
-    else if (phase < 0.40f) {
-        float t = (phase - 0.20f) / 0.20f;
+    }
+    else if (phase < 0.30f) {
+        float t = (phase - 0.15f) / 0.15f;
         return {
             COLOR_DEEP_RED.r + (COLOR_GOLDEN_RED.r - COLOR_DEEP_RED.r) * t,
             COLOR_DEEP_RED.g + (COLOR_GOLDEN_RED.g - COLOR_DEEP_RED.g) * t,
             COLOR_DEEP_RED.b + (COLOR_GOLDEN_RED.b - COLOR_DEEP_RED.b) * t
         };
-    } 
-    else if (phase < 0.65f) {
-        float t = (phase - 0.40f) / 0.25f;
+    }
+    else if (phase < 0.70f) {
+        float t = (phase - 0.30f) / 0.40f;
         return {
             COLOR_GOLDEN_RED.r + (COLOR_GOLDEN_YELLOW.r - COLOR_GOLDEN_RED.r) * t,
             COLOR_GOLDEN_RED.g + (COLOR_GOLDEN_YELLOW.g - COLOR_GOLDEN_RED.g) * t,
             COLOR_GOLDEN_RED.b + (COLOR_GOLDEN_YELLOW.b - COLOR_GOLDEN_RED.b) * t
         };
     }
-    else if (phase < 0.85f) {
-        float t = (phase - 0.65f) / 0.20f;
-        return {
-            COLOR_GOLDEN_YELLOW.r + (COLOR_SOFT_GOLD.r - COLOR_GOLDEN_YELLOW.r) * t,
-            COLOR_GOLDEN_YELLOW.g + (COLOR_SOFT_GOLD.g - COLOR_GOLDEN_YELLOW.g) * t,
-            COLOR_GOLDEN_YELLOW.b + (COLOR_SOFT_GOLD.b - COLOR_GOLDEN_YELLOW.b) * t
-        };
-    }
     else {
-        float t = (phase - 0.85f) / 0.15f;
+        float t = (phase - 0.70f) / 0.30f;
         return {
-            COLOR_SOFT_GOLD.r + (COLOR_OFF_WHITE.r - COLOR_SOFT_GOLD.r) * t,
-            COLOR_SOFT_GOLD.g + (COLOR_OFF_WHITE.g - COLOR_SOFT_GOLD.g) * t,
-            COLOR_SOFT_GOLD.b + (COLOR_OFF_WHITE.b - COLOR_SOFT_GOLD.b) * t
+            COLOR_GOLDEN_YELLOW.r + (COLOR_OFF_WHITE.r - COLOR_GOLDEN_YELLOW.r) * t,
+            COLOR_GOLDEN_YELLOW.g + (COLOR_OFF_WHITE.g - COLOR_GOLDEN_YELLOW.g) * t,
+            COLOR_GOLDEN_YELLOW.b + (COLOR_OFF_WHITE.b - COLOR_GOLDEN_YELLOW.b) * t
         };
     }
 }
 
-void SunriseEffect::update(uint32_t delta_ms) {
-    float total_duration_ms = Config::SUNRISE_DURATION_MINUTES * 60.0f * 1000.0f;
-    m_progress += static_cast<float>(delta_ms) / total_duration_ms;
-    if (m_progress > 1.0f) m_progress = 1.0f;
+void SunsetEffect::update(uint32_t delta_ms) {
+    float total_duration_ms = (Config::SUNRISE_DURATION_MINUTES * 60.0f * 1000.0f) * 0.5f;
+    m_progress -= static_cast<float>(delta_ms) / total_duration_ms;
+    if (m_progress < 0.0f) m_progress = 0.0f;
 }
 
-void SunriseEffect::render(uint8_t* buffer, size_t width, size_t height) {
-    renderWithPhase(buffer, width, height, m_progress, Config::EAST_DIRECTION_DEGREES);
+void SunsetEffect::render(uint8_t* buffer, size_t width, size_t height) {
+    renderWithPhase(buffer, width, height, m_progress, Config::EAST_DIRECTION_DEGREES - 180.0f);
 }
 
-void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height, float phase, float direction_degrees) {
+void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height, float phase, float direction_degrees) {
     if (!buffer || width == 0 || height == 0) return;
 
     updateDirectionVector(direction_degrees);
@@ -104,8 +97,8 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
     float max_possible_dist = std::hypot(static_cast<float>(width), static_cast<float>(height));
     float current_wave_radius = phase * max_possible_dist * 1.4f;
 
-    // Matched scale with Sunset (0.25f -> 1.0f to match full daylight transition seamlessly)
-    float global_brightness_scale = 0.25f + (phase * 0.75f);
+    // Brightness scale matched seamlessly with Sunrise (1.0f -> 0.25f as phase decreases)
+    float global_brightness_scale = 0.25f + (phase * 0.75f); 
 
     for (size_t y = 0; y < height; ++y) {
         for (size_t x = 0; x < width; ++x) {
@@ -114,9 +107,9 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
 
             float min_effective_dist = 99999.0f;
 
-            for (const auto& peak : m_peak_coordinates) {
-                float px = static_cast<float>(peak.first);
-                float py = static_cast<float>(peak.second);
+            for (const auto& end_pt : m_end_coordinates) {
+                float px = static_cast<float>(end_pt.first);
+                float py = static_cast<float>(end_pt.second);
 
                 float dx = fx - px;
                 float dy = fy - py;
@@ -137,7 +130,7 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
                 pixel_phase = clampf(wave_delta / (max_possible_dist * 0.45f), 0.0f, 1.0f);
             }
 
-            ColorRGB rgb = getAlpenglowColor(pixel_phase);
+            ColorRGB rgb = getSunsetColor(pixel_phase);
 
             rgb.r *= global_brightness_scale;
             rgb.g *= global_brightness_scale;

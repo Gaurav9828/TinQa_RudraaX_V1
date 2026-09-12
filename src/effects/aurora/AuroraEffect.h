@@ -5,14 +5,15 @@
 #include <cstdint>
 #include <cstddef>
 #include <vector>
+#include <algorithm>
 
 enum class AuroraTheme {
-    EMERALD_CANOPY = 0, // Deep green swirls & high contrast rays
-    LIME_HORIZON,       // Warm yellow-green gradient diffuse sky
-    CRIMSON_CORONA,     // Soft green fading into vibrant pink/magenta tops
-    VIOLET_TEMPEST,     // Cyan vertical rays with brilliant purple sky
-    CLASSIC_ARC,        // Intense, sweep-directional green arc
-    POLARIS_DUSK,       // Deep indigo, teal, and violet multi-layered curtain
+    EMERALD_CANOPY = 0,
+    LIME_HORIZON,      
+    CRIMSON_CORONA,    
+    VIOLET_TEMPEST,    
+    CLASSIC_ARC,       
+    POLARIS_DUSK,      
     COUNT
 };
 
@@ -50,6 +51,11 @@ private:
     void updateMotionParameters();
     void getThemeColor(AuroraTheme theme, float normY, float &r, float &g, float &b);
     void getBlendedColor(float normY, float intensity, uint8_t &r, uint8_t &g, uint8_t &b);
+
+    // Static helper to replace std::clamp safely for C++11/C++14 compatibility
+    static float clampf(float val, float min_val, float max_val) {
+        return std::max(min_val, std::min(max_val, val));
+    }
 };
 
 #endif // AURORA_EFFECT_H

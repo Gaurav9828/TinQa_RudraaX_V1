@@ -49,6 +49,7 @@ add_executable(TinQa_RudraaX_V1
     src/effects/aurora/AuroraEffect.cpp
     src/effects/auto/AutoEffect.cpp
     src/effects/sunrise/SunriseEffect.cpp
+    src/effects/sunset/SunsetEffect.cpp
     src/effects/test_pattern/TestPatternEffect.cpp
 
     src/effects/auto/weather/WeatherProvider.cpp

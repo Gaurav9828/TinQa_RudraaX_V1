@@ -14,6 +14,7 @@
 #include "effects/aurora/AuroraEffect.h"
 #include "effects/auto/AutoEffect.h"
 #include "effects/sunrise/SunriseEffect.h"
+#include "effects/sunset/SunsetEffect.h"
 #include "effects/test_pattern/TestPatternEffect.h"
 #include "drivers/BH1750Driver.h"
 #include "drivers/LedMatrixDriver.h"
@@ -110,6 +111,7 @@ ThunderEffect thunderEffect;
 AuroraEffect auroraEffect;
 AutoEffect autoEffect;
 SunriseEffect sunriseEffect;
+SunsetEffect sunsetEffect;
 TestPatternEffect testPatternEffect;
 
 void setEffectPointer(AppState state)
@@ -135,6 +137,10 @@ void setEffectPointer(AppState state)
     case STATE_SUNRISE:
         activeEffect = &sunriseEffect;
         printf("[EFFECT MANAGER] Switched to SUNRISE\n");
+        break;
+    case STATE_SUNSET:
+        activeEffect = &sunsetEffect;
+        printf("[EFFECT MANAGER] Switched to SUNSET\n");
         break;
     default:
         activeEffect = nullptr;
@@ -262,9 +268,13 @@ int main()
             {
                 switchToEffect(STATE_AUTO);
             }
-            if (touchDriver.wasPad2Pressed())
+            if (touchDriver.wasPad2SingleClicked())
             {
                 switchToEffect(STATE_SUNRISE);
+            }
+            if (touchDriver.wasPad2LongPressed())
+            {
+                switchToEffect(STATE_SUNSET);
             }
             if (touchDriver.wasPad3Pressed())
             {
@@ -295,6 +305,25 @@ int main()
         if (isPoweredOn && activeEffect != nullptr)
         {
             activeEffect->update(deltaMs);
+
+            // --- AUTONOMOUS CYCLIC TRANSITION ENGINE ---
+            if (currentState == STATE_SUNRISE && sunriseEffect.getProgress() >= 1.0f)
+            {
+                printf("[AUTONOMOUS CYCLE] Sunrise finished! Transitioning directly into Sunset...\n");
+                currentState = STATE_SUNSET;
+                lastActiveState = STATE_SUNSET;
+                activeEffect = &sunsetEffect;
+                activeEffect->init(); // Starts at m_progress = 1.0f (Warm Daylight matching Sunrise end)
+            }
+            else if (currentState == STATE_SUNSET && sunsetEffect.getProgress() <= 0.0f)
+            {
+                printf("[AUTONOMOUS CYCLE] Sunset finished! Transitioning directly into Sunrise...\n");
+                currentState = STATE_SUNRISE;
+                lastActiveState = STATE_SUNRISE;
+                activeEffect = &sunriseEffect;
+                activeEffect->init(); // Starts at m_progress = 0.0f (Night Black matching Sunset end)
+            }
+
             activeEffect->render(renderBuffer, Config::MATRIX_WIDTH, Config::MATRIX_HEIGHT);
 
             for (size_t i = 0; i < MATRIX_BUFFER_BYTES; i++)

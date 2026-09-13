@@ -260,35 +260,54 @@ int main()
             wsServer.update();
         }
 
-        if (isTouchDriverReady)
-        {
-            touchDriver.update();
+    if (isTouchDriverReady)
+    {
+        touchDriver.update();
 
-            if (touchDriver.wasPad1Pressed())
-            {
+        // --- Pad 1 Handling (Auto Mode / Hyperlapse Toggle) ---
+        if (touchDriver.wasPad1SingleClicked())
+        {
+            if (currentState == STATE_AUTO) {
+                // If already in Auto mode, set/ensure standard real-time auto mode
+                autoEffect.setMode(AutoModeType::REAL_TIME);
+                printf("[AUTO] Explicit Real-Time Mode Set\n");
+            } else {
                 switchToEffect(STATE_AUTO);
             }
-            if (touchDriver.wasPad2SingleClicked())
-            {
-                switchToEffect(STATE_SUNRISE);
-            }
-            if (touchDriver.wasPad2LongPressed())
-            {
-                switchToEffect(STATE_SUNSET);
-            }
-            if (touchDriver.wasPad3Pressed())
-            {
-                switchToEffect(STATE_THUNDER);
-            }
-            if (touchDriver.wasPad4Pressed())
-            {
-                switchToEffect(STATE_AURORA);
-            }
-            if (touchDriver.wasPad5Pressed())
-            {
-                togglePower();
-            }
         }
+        if (touchDriver.wasPad1LongPressed())
+        {
+            if (currentState != STATE_AUTO) {
+                switchToEffect(STATE_AUTO);
+            }
+            autoEffect.toggleHyperlapse();
+            printf("[AUTO] Hyperlapse Mode Toggled -> Active: %s\n", autoEffect.getName());
+        }
+
+        // --- Pad 2 Handling (Sunrise / Sunset) ---
+        if (touchDriver.wasPad2SingleClicked())
+        {
+            switchToEffect(STATE_SUNRISE);
+        }
+        if (touchDriver.wasPad2LongPressed())
+        {
+            switchToEffect(STATE_SUNSET);
+        }
+
+        // --- Pads 3, 4, 5 Handling ---
+        if (touchDriver.wasPad3Pressed())
+        {
+            switchToEffect(STATE_THUNDER);
+        }
+        if (touchDriver.wasPad4Pressed())
+        {
+            switchToEffect(STATE_AURORA);
+        }
+        if (touchDriver.wasPad5Pressed())
+        {
+            togglePower();
+        }
+    }
 
         if (isAmbientSensorReady)
         {

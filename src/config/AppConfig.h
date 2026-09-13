@@ -30,7 +30,7 @@ namespace Config
     inline constexpr bool TEST_MODE = (TEST_MODE_ENABLED == 1);
     
     // Default boot state set to STATE_TEST for initial panel orientation checking
-    inline constexpr AppState INITIAL_APP_STATE = STATE_AURORA;
+    inline constexpr AppState INITIAL_APP_STATE = STATE_AUTO;
 
     // Display Matrix Configuration (32x32 = 4 Panels, 64x64 = 16 Panels, etc.)
     inline constexpr uint16_t MATRIX_WIDTH  = 32;
@@ -61,7 +61,7 @@ namespace Config
     inline constexpr double SECONDS_IN_DAY = 86400.0;
     inline constexpr float PI = 3.14159265358979323846f;
 
-    constexpr double HYPERLAPSE_DAY_DURATION_MINUTES = 1.0;
+    constexpr double HYPERLAPSE_DAY_DURATION_MINUTES = 2.0;
     inline constexpr bool HYPERLAPSE = true;
 
     inline constexpr float DEFAULT_START_HOUR_24 = 5.0f;

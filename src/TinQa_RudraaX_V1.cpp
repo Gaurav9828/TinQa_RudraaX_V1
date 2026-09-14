@@ -120,6 +120,9 @@ void initSystemClock() {
     } else {
         LOG_INFO("RTC", "System Clock initialized via build timestamp fallback: Day %u, Seconds %.1f", g_day_of_year, g_simulated_seconds);
     }
+    // Pre-sync AutoEffect simulated time immediately upon boot
+    autoEffect.setSimulatedTime(g_simulated_seconds);
+    autoEffect.setDayOfYear(g_day_of_year);
 }
 
 void updateSystemClock(uint32_t delta_ms) {
@@ -246,7 +249,7 @@ int main() {
     multicore_launch_core1(core1_entry);
     isCore1Ready = true;
 
-    // 2. Initialize quick flash time tracking
+    // 2. Initialize quick flash time tracking and pre-sync AutoEffect
     initSystemClock();
 
     // 3. Initialize fast I2C sensors
@@ -268,19 +271,6 @@ int main() {
     LOG_INFO("BOOT", "   TinQa RudraaX V1 Firmware Starting   ");
     LOG_INFO("BOOT", "=========================================");
 
-    /*
-    // Wi-Fi / WebSockets Initialization (Commented out as requested for instant standalone SMPS boot)
-    // WifiWsServer wsServer;
-    // if (Config::TEST_MODE) {
-    //     if (wsServer.init()) {
-    //         isWsServerReady = true;
-    //         LOG_INFO("NETWORK", "Wi-Fi / WebSockets active.");
-    //     } else {
-    //         LOG_WARN("NETWORK", "Wi-Fi / WS Server failed init. Continuing offline.");
-    //     }
-    // }
-    */
-
     uint32_t lastTime = to_ms_since_boot(get_absolute_time());
 
     while (true) {
@@ -293,13 +283,6 @@ int main() {
         }
 
         updateSystemClock(deltaMs);
-
-        /*
-        // WebSocket Loop Update (Commented out)
-        // if (Config::TEST_MODE && isWsServerReady) {
-        //     wsServer.update();
-        // }
-        */
 
         // Touch Input Processing
         if (isTouchDriverReady) {
@@ -338,8 +321,13 @@ int main() {
 
         // Frame Rendering Logic
         if (isInStartupPhase) {
+            // Render startup animation on screen
             startupEffect.update(deltaMs);
             startupEffect.render(renderBuffer, Config::MATRIX_WIDTH, Config::MATRIX_HEIGHT);
+
+            // Continuously pre-compute AutoEffect layers and sun/moon positions in background
+            // using the restored clock time so all states are fully settled when startup finishes.
+            autoEffect.updateWithMasterTime(deltaMs, g_simulated_seconds, g_day_of_year);
 
             if (startupEffect.isComplete()) {
                 isInStartupPhase = false;
@@ -381,18 +369,6 @@ int main() {
         }
 
         totalFrameCount++;
-        
-        /*
-        // WebSocket telemetry broadcast (Commented out)
-        // if (Config::TEST_MODE && isWsServerReady && (totalFrameCount % 100 == 0)) {
-        //     MatrixTelemetryHeader telemetry;
-        //     telemetry.brightness = static_cast<uint8_t>((targetScale / 255.0f) * 100.0f);
-        //     telemetry.actual_fps = Config::TARGET_FPS;
-        //     telemetry.effect_id = isInStartupPhase ? 0xFF : static_cast<uint8_t>(currentState);
-        //     wsServer.broadcastFrame(displayBuffer, MATRIX_BUFFER_BYTES, telemetry);
-        // }
-        */
-
         sleep_ms(Config::FRAME_INTERVAL_MS);
     }
 

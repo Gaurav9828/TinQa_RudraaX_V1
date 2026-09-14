@@ -22,7 +22,8 @@ AutoEffect::AutoEffect()
       m_hyperlapse_seconds(5.0 * 3600.0),
       m_saved_real_time_seconds(0.0),
       m_day_of_year(1),
-      m_watchdog_save_timer_ms(0)
+      m_watchdog_save_timer_ms(0),
+      m_time_initialized(false)
 {
     double recovered_seconds = 0.0;
     uint16_t recovered_day = 1;
@@ -34,15 +35,18 @@ AutoEffect::AutoEffect()
             m_simulated_seconds = recovered_seconds;
             m_saved_real_time_seconds = recovered_seconds;
             m_day_of_year = recovered_day;
+            m_time_initialized = true;
         } else {
             m_simulated_seconds = 0.0;
             m_saved_real_time_seconds = 0.0;
             m_day_of_year = 1;
+            m_time_initialized = false;
         }
     } else {
         m_simulated_seconds = 0.0;
         m_saved_real_time_seconds = 0.0;
         m_day_of_year = 1;
+        m_time_initialized = false;
     }
     init();
 }
@@ -55,7 +59,7 @@ void AutoEffect::init() {
 
     m_solar_layer.init();
     m_lunar_layer.init();
-    m_starfield_layer.init();
+    // m_starfield_layer.init();
     m_meteor_layer.init();
 
     m_effect_temp_buffer.clear();
@@ -95,6 +99,7 @@ void AutoEffect::setSimulatedTime(double total_seconds) {
         m_simulated_seconds = clamped;
         m_saved_real_time_seconds = clamped;
     }
+    m_time_initialized = true;
 }
 
 void AutoEffect::setDayOfYear(uint16_t day_of_year) {
@@ -145,6 +150,8 @@ void AutoEffect::updateWithMasterTime(uint32_t delta_ms, double simulated_second
         m_saved_real_time_seconds = normalized_master;
     }
 
+    m_time_initialized = true;
+
     // Persist running real-time state to non-volatile memory checkpoints every 1000ms
     m_watchdog_save_timer_ms += delta_ms;
     if (m_watchdog_save_timer_ms >= 1000) {
@@ -173,7 +180,7 @@ void AutoEffect::updateWithMasterTime(uint32_t delta_ms, double simulated_second
 
     m_solar_layer.update(delta_ms, ctx);
     m_lunar_layer.update(delta_ms, ctx);
-    m_starfield_layer.update(delta_ms, ctx);
+    // m_starfield_layer.update(delta_ms, ctx);
     m_meteor_layer.update(delta_ms, ctx.current_hour, ctx.is_hyperlapse);
 }
 
@@ -191,6 +198,11 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
 
     std::fill(buffer, buffer + total_bytes, 0);
 
+    if (!m_time_initialized) {
+        // Suppress rendering until the master time is initialized to prevent startup flash/sunrise jump
+        return;
+    }
+
     double active_rendering_seconds = isHyperlapse() ? m_hyperlapse_seconds : m_simulated_seconds;
     const double current_hour = active_rendering_seconds / 3600.0;
     const bool is_daytime = (current_hour >= 5.0 && current_hour <= 19.5);
@@ -207,7 +219,7 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
 
     m_solar_layer.render(buffer, width, height, ctx);
     m_lunar_layer.render(buffer, width, height, ctx);
-    m_starfield_layer.render(buffer, width, height, ctx);
+    // m_starfield_layer.render(buffer, width, height, ctx);
     m_meteor_layer.render(buffer, width, height, ctx.weather.cloud_density);
        
     if (current_hour >= 4.5 && current_hour <= 8.5) {

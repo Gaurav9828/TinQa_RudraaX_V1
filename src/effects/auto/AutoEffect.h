@@ -10,7 +10,7 @@
 #include "effects/thunder/ThunderEffect.h"
 #include "layers/SolarLightingLayer.h"
 #include "layers/LunarLightingLayer.h"
-#include "layers/StarfieldLayer.h"
+// #include "layers/StarfieldLayer.h"
 #include "layers/MeteorShowerLayer.h"
 #include "effects/auto/weather/WeatherProvider.h"
 #include "effects/auto/weather/WeatherModifier.h"
@@ -52,6 +52,7 @@ private:
     double m_saved_real_time_seconds;
     uint16_t m_day_of_year;
     uint32_t m_watchdog_save_timer_ms;
+    bool m_time_initialized;
 
     WeatherProvider m_weather_provider;
 
@@ -62,7 +63,7 @@ private:
 
     SolarLightingLayer m_solar_layer;
     LunarLightingLayer m_lunar_layer;
-    StarfieldLayer m_starfield_layer;
+    // StarfieldLayer m_starfield_layer;
     MeteorShowerLayer m_meteor_layer;
 
     std::vector<uint8_t> m_effect_temp_buffer;

@@ -57,10 +57,11 @@ ActiveWeatherState WeatherProvider::evaluateWeather(uint16_t day_of_year, double
     float hourly_drift = std::sin(static_cast<float>(current_hour_24) * 0.523598f) * 0.06f; 
     float final_density = std::clamp(target_density + hourly_drift, 0.0f, 1.0f);
 
-    // 3. Precise Astronomical Lunar Phase Calculation
+    // 3. Precise Astronomical Lunar Phase Calculation (Dependent on Date and Hours)
     // Reference New Moon for 2026: Day 254 (September 11, 2026)
     const float synodic_month = 29.53059f;
-    float days_since_ref = static_cast<float>(day_of_year) - 254.0f;
+    float fractional_day = static_cast<float>(day_of_year) + static_cast<float>(current_hour_24 / 24.0);
+    float days_since_ref = fractional_day - 254.0f;
     float phase = std::fmod(days_since_ref, synodic_month);
     if (phase < 0.0f) phase += synodic_month;
     float cycle_fraction = phase / synodic_month;
@@ -74,6 +75,7 @@ ActiveWeatherState WeatherProvider::evaluateWeather(uint16_t day_of_year, double
 
     return ActiveWeatherState{
         final_density,
-        is_thunder_possible
+        is_thunder_possible,
+        moon_phase_factor
     };
 }

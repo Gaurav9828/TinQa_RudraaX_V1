@@ -9,7 +9,7 @@ SunsetEffect::SunsetEffect() {
 
 void SunsetEffect::init() {
     m_progress = 1.0f; 
-    m_smoothed_progress = 1.0f;
+    m_smoothed_progress = -1.0f; // -1.0f flags uninitialized state for instant first-frame snap
     m_previous_frame_buffer.clear();
     parseConfig();
 }
@@ -49,7 +49,7 @@ SunsetEffect::ColorRGB SunsetEffect::getSunsetColor(float phase) const {
     } 
     else if (phase < 0.15f) {
         float t = phase / 0.15f;
-        t = t * t * (3.0f - 2.0f * t); // Smooth step curve
+        t = t * t * (3.0f - 2.0f * t);
         return {
             COLOR_DEEP_RED.r * t,
             COLOR_DEEP_RED.g * t,
@@ -103,9 +103,14 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
         m_previous_frame_buffer.resize(total_bytes, 0);
     }
 
-    // Heavy temporal smoothing factor to ensure ultra-gradual transitions during hyperlapse steps
-    float smoothing_factor = 0.12f; 
-    m_smoothed_progress += (phase - m_smoothed_progress) * smoothing_factor;
+    // Instantly snap smoothed progress on first frame to prevent animation/replay pop
+    bool is_first_frame = (m_smoothed_progress < 0.0f);
+    if (is_first_frame) {
+        m_smoothed_progress = phase;
+    } else {
+        float smoothing_factor = 0.20f; 
+        m_smoothed_progress += (phase - m_smoothed_progress) * smoothing_factor;
+    }
 
     if (m_smoothed_progress <= 0.001f && phase <= 0.001f) {
         std::fill(buffer, buffer + total_bytes, 0);
@@ -119,9 +124,8 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
     float max_possible_dist = std::hypot(static_cast<float>(width), static_cast<float>(height));
     float current_wave_radius = m_smoothed_progress * max_possible_dist * 1.6f;
 
-    // Smooth power curve for global brightness scaling to avoid sharp steps
-    float global_brightness_scale = 0.15f + (m_smoothed_progress * 0.85f);
-    global_brightness_scale = global_brightness_scale * global_brightness_scale * (3.0f - 2.0f * global_brightness_scale);
+    float p = clampf(m_smoothed_progress, 0.0f, 1.0f);
+    float global_brightness_scale = p * p * (3.0f - 2.0f * p);
 
     for (size_t y = 0; y < height; ++y) {
         for (size_t x = 0; x < width; ++x) {
@@ -150,30 +154,40 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
             float pixel_phase = 0.0f;
             if (current_wave_radius > 0.001f) {
                 float wave_delta = current_wave_radius - min_effective_dist;
-                // Wider soft falloff spread to eliminate hard cutoffs between adjacent pixels
                 pixel_phase = clampf(wave_delta / (max_possible_dist * 0.65f), 0.0f, 1.0f);
             }
 
             ColorRGB rgb = getSunsetColor(pixel_phase);
 
-            rgb.r *= global_brightness_scale;
-            rgb.g *= global_brightness_scale;
-            rgb.b *= global_brightness_scale;
+            float norm_r = rgb.r * global_brightness_scale / 255.0f;
+            float norm_g = rgb.g * global_brightness_scale / 255.0f;
+            float norm_b = rgb.b * global_brightness_scale / 255.0f;
+
+            norm_r = std::pow(norm_r, 1.8f);
+            norm_g = std::pow(norm_g, 1.8f);
+            norm_b = std::pow(norm_b, 1.8f);
+
+            uint8_t target_r = static_cast<uint8_t>(clampf(norm_r * 255.0f, 0.0f, 255.0f));
+            uint8_t target_g = static_cast<uint8_t>(clampf(norm_g * 255.0f, 0.0f, 255.0f));
+            uint8_t target_b = static_cast<uint8_t>(clampf(norm_b * 255.0f, 0.0f, 255.0f));
 
             size_t pixel_index = (y * width + x) * 3;
 
-            uint8_t target_r = static_cast<uint8_t>(clampf(rgb.r, 0.0f, 255.0f));
-            uint8_t target_g = static_cast<uint8_t>(clampf(rgb.g, 0.0f, 255.0f));
-            uint8_t target_b = static_cast<uint8_t>(clampf(rgb.b, 0.0f, 255.0f));
+            uint8_t final_r, final_g, final_b;
+            if (is_first_frame) {
+                // Instantly set target values on first frame to eliminate fade-in/replay lag
+                final_r = target_r;
+                final_g = target_g;
+                final_b = target_b;
+            } else {
+                uint8_t prev_r = m_previous_frame_buffer[pixel_index];
+                uint8_t prev_g = m_previous_frame_buffer[pixel_index + 1];
+                uint8_t prev_b = m_previous_frame_buffer[pixel_index + 2];
 
-            // Deep temporal blending (Lerp with 0.35 weight) to completely eliminate high-speed blinking/flickering
-            uint8_t prev_r = m_previous_frame_buffer[pixel_index];
-            uint8_t prev_g = m_previous_frame_buffer[pixel_index + 1];
-            uint8_t prev_b = m_previous_frame_buffer[pixel_index + 2];
-
-            uint8_t final_r = static_cast<uint8_t>(prev_r + (static_cast<float>(target_r - prev_r) * 0.35f));
-            uint8_t final_g = static_cast<uint8_t>(prev_g + (static_cast<float>(target_g - prev_g) * 0.35f));
-            uint8_t final_b = static_cast<uint8_t>(prev_b + (static_cast<float>(target_b - prev_b) * 0.35f));
+                final_r = static_cast<uint8_t>(prev_r + (static_cast<float>(target_r - prev_r) * 0.45f));
+                final_g = static_cast<uint8_t>(prev_g + (static_cast<float>(target_g - prev_g) * 0.45f));
+                final_b = static_cast<uint8_t>(prev_b + (static_cast<float>(target_b - prev_b) * 0.45f));
+            }
 
             buffer[pixel_index]     = final_r;
             buffer[pixel_index + 1] = final_g;

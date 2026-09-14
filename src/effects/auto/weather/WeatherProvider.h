@@ -9,8 +9,8 @@
 struct ActiveWeatherState {
     float cloud_density;
     bool is_thunder_possible;
+    float moon_phase_factor; // Added to pass illumination/phase factor to RenderContext
 };
-
 #endif // ACTIVE_WEATHER_STATE_H
 
 class WeatherProvider {

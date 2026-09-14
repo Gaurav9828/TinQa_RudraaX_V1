@@ -3,7 +3,6 @@
 #include "pico/stdlib.h"
 #include <cmath>
 #include <algorithm>
-#include <ctime>
 
 namespace {
     inline float smoothstep(float edge0, float edge1, float x) {
@@ -15,38 +14,35 @@ namespace {
         amount = smoothstep(0.0f, 1.0f, amount);
         return a + (b - a) * amount;
     }
-
-    // Helper to extract system real-time clock hours and day-of-year on boot
-    void getRealWorldTime(double& out_seconds, uint16_t& out_day_of_year) {
-        time_t now;
-        time(&now);
-        struct tm* timeinfo = localtime(&now);
-        if (timeinfo && timeinfo->tm_year > 100) { // Valid year > 2000
-            out_seconds = static_cast<double>(timeinfo->tm_hour * 3600 + timeinfo->tm_min * 60 + timeinfo->tm_sec);
-            out_day_of_year = static_cast<uint16_t>(timeinfo->tm_yday + 1);
-        } else {
-            // Fallback default if RTC is uninitialized: 06:00 AM on Day 1 (Jan 1)
-            out_seconds = 6.0 * 3600.0;
-            out_day_of_year = 1;
-        }
-    }
 }
 
 AutoEffect::AutoEffect()
-    : m_mode(AutoModeType::REAL_TIME), // Default cleanly to REAL_TIME mode on boot
+    : m_mode(AutoModeType::REAL_TIME),
       m_simulated_seconds(0.0),
+      m_hyperlapse_seconds(5.0 * 3600.0),
+      m_saved_real_time_seconds(0.0),
       m_day_of_year(1),
       m_watchdog_save_timer_ms(0)
 {
     double recovered_seconds = 0.0;
     uint16_t recovered_day = 1;
 
-    // Check watchdog scratch registers first. If invalid/empty, fall back to hardware RTC / system clock persistence.
-    if (WatchdogManager::getInstance().getRecoveryTime(recovered_seconds, recovered_day) && recovered_day >= 1 && recovered_day <= 365) {
-        m_simulated_seconds = recovered_seconds;
-        m_day_of_year = recovered_day;
+    if (WatchdogManager::getInstance().getRecoveryTime(recovered_seconds, recovered_day)) {
+        if (!std::isnan(recovered_seconds) && !std::isinf(recovered_seconds) &&
+            recovered_seconds >= 0.0 && recovered_seconds < Config::SECONDS_IN_DAY &&
+            recovered_day >= 1 && recovered_day <= 365) {
+            m_simulated_seconds = recovered_seconds;
+            m_saved_real_time_seconds = recovered_seconds;
+            m_day_of_year = recovered_day;
+        } else {
+            m_simulated_seconds = 0.0;
+            m_saved_real_time_seconds = 0.0;
+            m_day_of_year = 1;
+        }
     } else {
-        getRealWorldTime(m_simulated_seconds, m_day_of_year);
+        m_simulated_seconds = 0.0;
+        m_saved_real_time_seconds = 0.0;
+        m_day_of_year = 1;
     }
     init();
 }
@@ -66,17 +62,38 @@ void AutoEffect::init() {
 }
 
 void AutoEffect::setMode(AutoModeType mode) {
+    if (m_mode != AutoModeType::HYPERLAPSE && mode == AutoModeType::HYPERLAPSE) {
+        // Save current real-time clock position before entering hyperlapse
+        m_saved_real_time_seconds = m_simulated_seconds;
+        
+        // Start hyperlapse precisely at sunrise (5:00 AM) and run through the full day/night cycle
+        m_hyperlapse_seconds = 5.0 * 3600.0;
+    } 
+    else if (m_mode == AutoModeType::HYPERLAPSE && mode == AutoModeType::REAL_TIME) {
+        // Restore normal real-time clock position when exiting hyperlapse
+        m_simulated_seconds = m_saved_real_time_seconds;
+    }
     m_mode = mode;
 }
 
 void AutoEffect::toggleHyperlapse() {
-    setMode(isHyperlapse() ? AutoModeType::REAL_TIME : AutoModeType::HYPERLAPSE);
+    if (!isHyperlapse()) {
+        setMode(AutoModeType::HYPERLAPSE);
+    } else {
+        setMode(AutoModeType::REAL_TIME);
+    }
 }
 
 void AutoEffect::setSimulatedTime(double total_seconds) {
-    m_simulated_seconds = std::fmod(total_seconds, Config::SECONDS_IN_DAY);
-    if (m_simulated_seconds < 0.0) {
-        m_simulated_seconds += Config::SECONDS_IN_DAY;
+    if (std::isnan(total_seconds) || std::isinf(total_seconds)) return;
+    double clamped = std::fmod(total_seconds, Config::SECONDS_IN_DAY);
+    if (clamped < 0.0) clamped += Config::SECONDS_IN_DAY;
+
+    if (isHyperlapse()) {
+        m_hyperlapse_seconds = clamped;
+    } else {
+        m_simulated_seconds = clamped;
+        m_saved_real_time_seconds = clamped;
     }
 }
 
@@ -86,7 +103,8 @@ void AutoEffect::setDayOfYear(uint16_t day_of_year) {
 
 float AutoEffect::calculateMoonPhaseFactor() const {
     const double SYNODIC_MONTH = 29.530588;
-    double total_days = static_cast<double>(m_day_of_year) + (m_simulated_seconds / Config::SECONDS_IN_DAY);
+    double active_seconds = isHyperlapse() ? m_hyperlapse_seconds : m_simulated_seconds;
+    double total_days = static_cast<double>(m_day_of_year) + (active_seconds / Config::SECONDS_IN_DAY);
     double lunar_age = std::fmod(total_days, SYNODIC_MONTH);
 
     if (lunar_age < 0.0) lunar_age += SYNODIC_MONTH;
@@ -96,30 +114,44 @@ float AutoEffect::calculateMoonPhaseFactor() const {
 }
 
 void AutoEffect::updateWithMasterTime(uint32_t delta_ms, double simulated_seconds, uint16_t day_of_year) {
-    m_simulated_seconds = simulated_seconds;
-    m_day_of_year = day_of_year;
-
-    // If running in hyperlapse mode locally, advance internal simulated time multiplier smoothly
-    if (isHyperlapse()) {
-        double time_step_sec = (delta_ms / 1000.0) * 300.0;
-        m_simulated_seconds += time_step_sec;
-        if (m_simulated_seconds >= Config::SECONDS_IN_DAY) {
-            m_simulated_seconds -= Config::SECONDS_IN_DAY;
-            m_day_of_year++;
-            if (m_day_of_year > 365) {
-                m_day_of_year = 1;
-            }
-        }
+    if (std::isnan(simulated_seconds) || std::isinf(simulated_seconds)) {
+        simulated_seconds = 0.0;
     }
 
-    // Periodic watchdog state checkpointing (every 1000ms) to ensure seamless recovery
+    double normalized_master = std::fmod(simulated_seconds, Config::SECONDS_IN_DAY);
+    if (normalized_master < 0.0) normalized_master += Config::SECONDS_IN_DAY;
+
+    m_day_of_year = std::clamp(day_of_year, static_cast<uint16_t>(1), static_cast<uint16_t>(365));
+
+    if (isHyperlapse()) {
+        // Real-time clock remains completely independent and static at the saved time
+        m_simulated_seconds = m_saved_real_time_seconds;
+
+        // Advance hyperlapse playback continuously so that a full 24-hour cycle completes
+        // within the configured hyperlapse duration (e.g., 1 minute).
+        double cycle_duration_sec = static_cast<double>(Config::HYPERLAPSE_DURATION_MINUTES) * 60.0;
+        if (cycle_duration_sec <= 0.0) cycle_duration_sec = 60.0;
+        
+        double speed_multiplier = Config::SECONDS_IN_DAY / cycle_duration_sec;
+        double time_step_sec = (static_cast<double>(delta_ms) / 1000.0) * speed_multiplier;
+        
+        m_hyperlapse_seconds += time_step_sec;
+        if (m_hyperlapse_seconds >= Config::SECONDS_IN_DAY) {
+            m_hyperlapse_seconds -= Config::SECONDS_IN_DAY; // Loop continuously through full day/night cycles
+        }
+    } else {
+        // Normal mode: clock runs strictly on normal master time
+        m_simulated_seconds = normalized_master;
+        m_saved_real_time_seconds = normalized_master;
+    }
+
+    // Persist running real-time state to non-volatile memory checkpoints every 1000ms
     m_watchdog_save_timer_ms += delta_ms;
     if (m_watchdog_save_timer_ms >= 1000) {
         m_watchdog_save_timer_ms = 0;
-        WatchdogManager::getInstance().saveRecoveryState(m_simulated_seconds, m_day_of_year);
+        WatchdogManager::getInstance().saveRecoveryState(m_saved_real_time_seconds, m_day_of_year);
     }
 
-    // Always kick hardware watchdog to prevent timeouts during normal cyclic operation
     WatchdogManager::getInstance().kick();
 
     m_sunrise_effect.update(delta_ms);
@@ -127,7 +159,8 @@ void AutoEffect::updateWithMasterTime(uint32_t delta_ms, double simulated_second
     m_aurora_effect.update(delta_ms);
     m_thunder_effect.update(delta_ms);
 
-    const double current_hour = m_simulated_seconds / 3600.0;
+    double active_rendering_seconds = isHyperlapse() ? m_hyperlapse_seconds : m_simulated_seconds;
+    const double current_hour = active_rendering_seconds / 3600.0;
     ActiveWeatherState weather = m_weather_provider.evaluateWeather(m_day_of_year, current_hour);
 
     RenderContext ctx{
@@ -156,10 +189,10 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
         m_effect_temp_buffer.resize(total_bytes);
     }
 
-    // Guard against uninitialized memory / full panel whiteouts by explicitly clearing the buffer to black first
     std::fill(buffer, buffer + total_bytes, 0);
 
-    const double current_hour = m_simulated_seconds / 3600.0;
+    double active_rendering_seconds = isHyperlapse() ? m_hyperlapse_seconds : m_simulated_seconds;
+    const double current_hour = active_rendering_seconds / 3600.0;
     const bool is_daytime = (current_hour >= 5.0 && current_hour <= 19.5);
 
     ActiveWeatherState weather = m_weather_provider.evaluateWeather(m_day_of_year, current_hour);

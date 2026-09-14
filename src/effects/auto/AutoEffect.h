@@ -48,6 +48,8 @@ private:
 
     AutoModeType m_mode;
     double m_simulated_seconds;
+    double m_hyperlapse_seconds;
+    double m_saved_real_time_seconds;
     uint16_t m_day_of_year;
     uint32_t m_watchdog_save_timer_ms;
 

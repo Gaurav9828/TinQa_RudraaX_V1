@@ -61,7 +61,7 @@ namespace Config
     inline constexpr double SECONDS_IN_DAY = 86400.0;
     inline constexpr float PI = 3.14159265358979323846f;
 
-    constexpr double HYPERLAPSE_DAY_DURATION_MINUTES = 2.0;
+    constexpr double HYPERLAPSE_DURATION_MINUTES = 1.0;
     inline constexpr bool HYPERLAPSE = true;
 
     inline constexpr float DEFAULT_START_HOUR_24 = 5.0f;

@@ -48,6 +48,10 @@ add_executable(TinQa_RudraaX_V1
     # Main Application
     src/TinQa_RudraaX_V1.cpp
 
+    # Startup Effect
+    src/effects/startup/StartupEffect.h
+    src/effects/startup/StartupEffect.cpp
+    
     # Hardware Drivers
     src/drivers/BH1750Driver.cpp
     src/drivers/LedMatrixDriver.cpp
@@ -72,6 +76,8 @@ add_executable(TinQa_RudraaX_V1
     src/utils/WatchdogManager.h
     src/system/StateController.h
     src/utils/TimePersistence.h
+    src/drivers/Pcf8563Driver.h
+    src/drivers/Pcf8563Driver.cpp
 )
 
 # Compile PIO Assembly File into C++ Header

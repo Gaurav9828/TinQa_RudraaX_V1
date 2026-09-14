@@ -10,13 +10,14 @@
 #include "pico/util/datetime.h"
 #include "pico/multicore.h"
 #include "pico/sync.h"
+#include "hardware/i2c.h"
 
 // Project Header Files
 #include "config/AppConfig.h"
 #include "drivers/TouchDriver.h"
 #include "drivers/BH1750Driver.h"
 #include "drivers/LedMatrixDriver.h"
-#include "network/WifiWsServer.h"
+// #include "network/WifiWsServer.h" // Commented out: Wi-Fi stack disabled for instant boot optimization
 #include "utils/TimePersistence.h"
 
 // Effect Subsystem Headers
@@ -27,10 +28,13 @@
 #include "effects/sunrise/SunriseEffect.h"
 #include "effects/sunset/SunsetEffect.h"
 #include "effects/test_pattern/TestPatternEffect.h"
+#include "effects/startup/StartupEffect.h"
 
 // ============================================================================
 // CONSTANTS & SYSTEM BUFFERS
 // ============================================================================
+bool isInStartupPhase = true;
+
 constexpr size_t MATRIX_BUFFER_BYTES = Config::MATRIX_WIDTH * Config::MATRIX_HEIGHT * 3;
 constexpr uint32_t FIFO_CMD_RENDER = 0xDEADBEEF;
 
@@ -38,10 +42,11 @@ static uint8_t renderBuffer[MATRIX_BUFFER_BYTES] = {0};
 static uint8_t displayBuffer[MATRIX_BUFFER_BYTES] = {0};
 
 static LedMatrixDriver hardwareMatrix;
+// static WifiWsServer wsServer; // Commented out: Wi-Fi stack instance disabled
 
 // Hardware System Status Indicators
 static bool isCore1Ready = false;
-static bool isWsServerReady = false;
+// static bool isWsServerReady = false; // Commented out
 static bool isTouchDriverReady = false;
 static bool isAmbientSensorReady = false;
 
@@ -51,7 +56,7 @@ static AppState currentState = Config::INITIAL_APP_STATE;
 static AppState lastActiveState = Config::INITIAL_APP_STATE;
 static uint32_t totalFrameCount = 0;
 
-// Master Clock State Variables (Persistent across reboots/power cycles)
+// Master Clock State Variables (Persistent across reboots/power cycles via Flash TimePersistence)
 static uint16_t g_day_of_year = 150;
 static double g_simulated_seconds = 0.0;
 static uint32_t g_time_save_timer_ms = 0;
@@ -64,6 +69,7 @@ static AutoEffect autoEffect;
 static SunriseEffect sunriseEffect;
 static SunsetEffect sunsetEffect;
 static TestPatternEffect testPatternEffect;
+static StartupEffect startupEffect;
 
 // ============================================================================
 // SIMPLE SERIAL MONITOR LOGGING MACROS
@@ -109,9 +115,8 @@ const char* getAppStateName(AppState state) {
 // SYSTEM TIME INITIALIZATION & CLOCK ENGINE
 // ============================================================================
 void initSystemClock() {
-    // Load last saved state from flash storage, falling back to compile-time macro if unavailable
     if (TimePersistence::loadState(g_day_of_year, g_simulated_seconds)) {
-        LOG_INFO("RTC", "System Clock restored from flash state: Day %u, Seconds %.1f", g_day_of_year, g_simulated_seconds);
+        LOG_INFO("RTC", "System Clock restored from flash persistence state: Day %u, Seconds %.1f", g_day_of_year, g_simulated_seconds);
     } else {
         LOG_INFO("RTC", "System Clock initialized via build timestamp fallback: Day %u, Seconds %.1f", g_day_of_year, g_simulated_seconds);
     }
@@ -120,9 +125,8 @@ void initSystemClock() {
 void updateSystemClock(uint32_t delta_ms) {
     double speed_multiplier = 1.0;
 
-    // Check if AutoEffect is active and running in hyperlapse mode to scale time appropriately
     if (currentState == STATE_AUTO && autoEffect.isHyperlapse()) {
-        const double target_cycle_mins = static_cast<double>(Config::HYPERLAPSE_DAY_DURATION_MINUTES);
+        const double target_cycle_mins = static_cast<double>(Config::HYPERLAPSE_DURATION_MINUTES);
         speed_multiplier = Config::SECONDS_IN_DAY / (target_cycle_mins > 0.0 ? (target_cycle_mins * 60.0) : 120.0);
     }
 
@@ -133,7 +137,6 @@ void updateSystemClock(uint32_t delta_ms) {
         g_day_of_year = static_cast<uint16_t>((g_day_of_year % 365) + 1);
     }
 
-    // Periodically checkpoint master clock to flash every 30 seconds
     g_time_save_timer_ms += delta_ms;
     if (g_time_save_timer_ms >= 30000) {
         g_time_save_timer_ms = 0;
@@ -180,7 +183,7 @@ void setEffectPointer(AppState state) {
 
 void switchToEffect(AppState newState) {
     if (!isPoweredOn) {
-        LOG_WARN("POWER_CTRL", "System is POWERED OFF. Ignoring state change to [%s]. Press Pad 5 to power on.", getAppStateName(newState));
+        LOG_WARN("POWER_CTRL", "System is POWERED OFF. Ignoring state change to [%s].", getAppStateName(newState));
         return;
     }
 
@@ -222,10 +225,8 @@ void togglePower() {
 // CORE 1 DISPLAY DRIVER ENGINE
 // ============================================================================
 void core1_entry() {
-    LOG_INFO("CORE_1", "Core 1 processing thread online.");
-    
     hardwareMatrix.init();
-    LOG_INFO("HW_MATRIX", "LedMatrixDriver hardware initialized.");
+    LOG_INFO("HW_MATRIX", "LedMatrixDriver hardware initialized on Core 1.");
 
     while (true) {
         uint32_t msg = multicore_fifo_pop_blocking();
@@ -240,43 +241,45 @@ void core1_entry() {
 // ============================================================================
 int main() {
     stdio_init_all();
-    sleep_ms(2000);
 
-    LOG_INFO("BOOT", "=========================================");
-    LOG_INFO("BOOT", "   TinQa RudraaX V1 Firmware Starting   ");
-    LOG_INFO("BOOT", "=========================================");
-
-    initSystemClock();
-
+    // 1. Launch Core 1 instantly so LED driver hardware starts up right away at power-on
     multicore_launch_core1(core1_entry);
     isCore1Ready = true;
-    LOG_INFO("SYSTEM", "Core 1 LED Engine active.");
 
-    WifiWsServer wsServer;
-    if (Config::TEST_MODE) {
-        if (wsServer.init()) {
-            isWsServerReady = true;
-            LOG_INFO("NETWORK", "Wi-Fi / WebSockets active.");
-        } else {
-            LOG_WARN("NETWORK", "Wi-Fi / WS Server failed. Continuing offline.");
-        }
-    }
+    // 2. Initialize quick flash time tracking
+    initSystemClock();
 
+    // 3. Initialize fast I2C sensors
     TouchDriver touchDriver;
     touchDriver.init();
     isTouchDriverReady = true;
-    LOG_INFO("HARDWARE", "Touch Driver online.");
 
     BH1750Driver ambientSensor;
     ambientSensor.init();
     if (ambientSensor.isOperational()) {
         isAmbientSensorReady = true;
-        LOG_INFO("HARDWARE", "BH1750 Light Sensor online.");
-    } else {
-        LOG_WARN("HARDWARE", "BH1750 Sensor offline. Using static brightness: %d", Config::DEFAULT_BRIGHTNESS);
     }
 
-    setEffectPointer(currentState);
+    // 4. Immediately start the startup effect before anything else
+    startupEffect.init();
+    isInStartupPhase = true;
+
+    LOG_INFO("BOOT", "=========================================");
+    LOG_INFO("BOOT", "   TinQa RudraaX V1 Firmware Starting   ");
+    LOG_INFO("BOOT", "=========================================");
+
+    /*
+    // Wi-Fi / WebSockets Initialization (Commented out as requested for instant standalone SMPS boot)
+    // WifiWsServer wsServer;
+    // if (Config::TEST_MODE) {
+    //     if (wsServer.init()) {
+    //         isWsServerReady = true;
+    //         LOG_INFO("NETWORK", "Wi-Fi / WebSockets active.");
+    //     } else {
+    //         LOG_WARN("NETWORK", "Wi-Fi / WS Server failed init. Continuing offline.");
+    //     }
+    // }
+    */
 
     uint32_t lastTime = to_ms_since_boot(get_absolute_time());
 
@@ -285,60 +288,43 @@ int main() {
         uint32_t deltaMs = currentTime - lastTime;
         lastTime = currentTime;
 
-        // Advance global master clock continuously regardless of active effect
-        updateSystemClock(deltaMs);
-
-        // WebSocket Processing
-        if (Config::TEST_MODE && isWsServerReady) {
-            wsServer.update();
+        if (deltaMs > 500) {
+            deltaMs = 16; 
         }
 
-        // Touch Input Diagnostics & State Handling
+        updateSystemClock(deltaMs);
+
+        /*
+        // WebSocket Loop Update (Commented out)
+        // if (Config::TEST_MODE && isWsServerReady) {
+        //     wsServer.update();
+        // }
+        */
+
+        // Touch Input Processing
         if (isTouchDriverReady) {
             touchDriver.update();
 
             if (touchDriver.wasPad1SingleClicked()) {
-                LOG_INFO("TOUCH_EVT", "Pad 1 Single-Tap Detected!");
                 if (currentState == STATE_AUTO) {
                     autoEffect.setMode(AutoModeType::REAL_TIME);
-                    LOG_INFO("AUTO", "Explicit Real-Time Mode Set");
                 } else {
                     switchToEffect(STATE_AUTO);
                 }
             }
             if (touchDriver.wasPad1LongPressed()) {
-                LOG_INFO("TOUCH_EVT", "Pad 1 Long-Press Detected!");
                 if (currentState != STATE_AUTO) {
                     switchToEffect(STATE_AUTO);
                 }
                 autoEffect.toggleHyperlapse();
-                LOG_INFO("AUTO", "Hyperlapse Mode Toggled -> Active: %s", autoEffect.getName());
             }
-
-            if (touchDriver.wasPad2SingleClicked()) {
-                LOG_INFO("TOUCH_EVT", "Pad 2 Single-Tap Detected!");
-                switchToEffect(STATE_SUNRISE);
-            }
-            if (touchDriver.wasPad2LongPressed()) {
-                LOG_INFO("TOUCH_EVT", "Pad 2 Long-Press Detected!");
-                switchToEffect(STATE_SUNSET);
-            }
-
-            if (touchDriver.wasPad3Pressed()) {
-                LOG_INFO("TOUCH_EVT", "Pad 3 Tap Detected!");
-                switchToEffect(STATE_THUNDER);
-            }
-            if (touchDriver.wasPad4Pressed()) {
-                LOG_INFO("TOUCH_EVT", "Pad 4 Tap Detected!");
-                switchToEffect(STATE_AURORA);
-            }
-            if (touchDriver.wasPad5Pressed()) {
-                LOG_INFO("TOUCH_EVT", "Pad 5 Power Tap Detected!");
-                togglePower();
-            }
+            if (touchDriver.wasPad2SingleClicked()) { switchToEffect(STATE_SUNRISE); }
+            if (touchDriver.wasPad2LongPressed()) { switchToEffect(STATE_SUNSET); }
+            if (touchDriver.wasPad3Pressed()) { switchToEffect(STATE_THUNDER); }
+            if (touchDriver.wasPad4Pressed()) { switchToEffect(STATE_AURORA); }
+            if (touchDriver.wasPad5Pressed()) { togglePower(); }
         }
 
-        // Ambient Brightness Management
         if (isAmbientSensorReady) {
             ambientSensor.update();
         }
@@ -351,8 +337,16 @@ int main() {
         float factor = targetScale / 255.0f;
 
         // Frame Rendering Logic
-        if (isPoweredOn && activeEffect != nullptr) {
-            // Pass global master clock variables into AutoEffect if active
+        if (isInStartupPhase) {
+            startupEffect.update(deltaMs);
+            startupEffect.render(renderBuffer, Config::MATRIX_WIDTH, Config::MATRIX_HEIGHT);
+
+            if (startupEffect.isComplete()) {
+                isInStartupPhase = false;
+                LOG_INFO("BOOT", "Startup sequence complete. Switching to Auto mode.");
+                setEffectPointer(STATE_AUTO);
+            }
+        } else if (isPoweredOn && activeEffect != nullptr) {
             if (currentState == STATE_AUTO) {
                 autoEffect.updateWithMasterTime(deltaMs, g_simulated_seconds, g_day_of_year);
             } else {
@@ -360,14 +354,12 @@ int main() {
             }
 
             if (currentState == STATE_SUNRISE && sunriseEffect.getProgress() >= 1.0f) {
-                LOG_INFO("AUTO_CYCLE", "Sunrise complete. Transitioning to Sunset...");
                 currentState = STATE_SUNSET;
                 lastActiveState = STATE_SUNSET;
                 activeEffect = &sunsetEffect;
                 activeEffect->init();
             } 
             else if (currentState == STATE_SUNSET && sunsetEffect.getProgress() <= 0.0f) {
-                LOG_INFO("AUTO_CYCLE", "Sunset complete. Transitioning to Sunrise...");
                 currentState = STATE_SUNRISE;
                 lastActiveState = STATE_SUNRISE;
                 activeEffect = &sunriseEffect;
@@ -385,26 +377,21 @@ int main() {
 
         if (isCore1Ready) {
             std::memcpy(displayBuffer, renderBuffer, MATRIX_BUFFER_BYTES);
-            
-            if (!multicore_fifo_push_timeout_us(FIFO_CMD_RENDER, 5000)) {
-                LOG_WARN("CORE_0", "FIFO Full! Skipped frame push.");
-            }
+            multicore_fifo_push_timeout_us(FIFO_CMD_RENDER, 5000);
         }
 
         totalFrameCount++;
-        if (totalFrameCount % 100 == 0) {
-            LOG_INFO("FRAME_STATUS", "Frame: %lu | Active State: %s | Pwr: %s | Lux Scale: %d/255", 
-                     totalFrameCount, getAppStateName(currentState), isPoweredOn ? "ON" : "OFF", targetScale);
-        }
-
-        if (Config::TEST_MODE && isWsServerReady) {
-            MatrixTelemetryHeader telemetry;
-            telemetry.brightness = static_cast<uint8_t>((targetScale / 255.0f) * 100.0f);
-            telemetry.actual_fps = Config::TARGET_FPS;
-            telemetry.effect_id = static_cast<uint8_t>(currentState);
-
-            wsServer.broadcastFrame(displayBuffer, MATRIX_BUFFER_BYTES, telemetry);
-        }
+        
+        /*
+        // WebSocket telemetry broadcast (Commented out)
+        // if (Config::TEST_MODE && isWsServerReady && (totalFrameCount % 100 == 0)) {
+        //     MatrixTelemetryHeader telemetry;
+        //     telemetry.brightness = static_cast<uint8_t>((targetScale / 255.0f) * 100.0f);
+        //     telemetry.actual_fps = Config::TARGET_FPS;
+        //     telemetry.effect_id = isInStartupPhase ? 0xFF : static_cast<uint8_t>(currentState);
+        //     wsServer.broadcastFrame(displayBuffer, MATRIX_BUFFER_BYTES, telemetry);
+        // }
+        */
 
         sleep_ms(Config::FRAME_INTERVAL_MS);
     }

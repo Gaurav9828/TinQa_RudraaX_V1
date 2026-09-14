@@ -3,6 +3,7 @@
 #include "pico/stdlib.h"
 #include <cmath>
 #include <algorithm>
+#include <ctime>
 
 namespace {
     inline float smoothstep(float edge0, float edge1, float x) {
@@ -14,20 +15,38 @@ namespace {
         amount = smoothstep(0.0f, 1.0f, amount);
         return a + (b - a) * amount;
     }
+
+    // Helper to extract system real-time clock hours and day-of-year on boot
+    void getRealWorldTime(double& out_seconds, uint16_t& out_day_of_year) {
+        time_t now;
+        time(&now);
+        struct tm* timeinfo = localtime(&now);
+        if (timeinfo && timeinfo->tm_year > 100) { // Valid year > 2000
+            out_seconds = static_cast<double>(timeinfo->tm_hour * 3600 + timeinfo->tm_min * 60 + timeinfo->tm_sec);
+            out_day_of_year = static_cast<uint16_t>(timeinfo->tm_yday + 1);
+        } else {
+            // Fallback default if RTC is uninitialized: 06:00 AM on Day 1 (Jan 1)
+            out_seconds = 6.0 * 3600.0;
+            out_day_of_year = 1;
+        }
+    }
 }
 
 AutoEffect::AutoEffect()
-    : m_mode(AutoModeType::HYPERLAPSE),
+    : m_mode(AutoModeType::REAL_TIME), // Default cleanly to REAL_TIME mode on boot
       m_simulated_seconds(0.0),
       m_day_of_year(1),
       m_watchdog_save_timer_ms(0)
 {
-    // Recover continuous state from watchdog scratch registers if rebooted after a freeze
     double recovered_seconds = 0.0;
     uint16_t recovered_day = 1;
-    if (WatchdogManager::getInstance().getRecoveryTime(recovered_seconds, recovered_day)) {
+
+    // Check watchdog scratch registers first. If invalid/empty, fall back to hardware RTC / system clock persistence.
+    if (WatchdogManager::getInstance().getRecoveryTime(recovered_seconds, recovered_day) && recovered_day >= 1 && recovered_day <= 365) {
         m_simulated_seconds = recovered_seconds;
         m_day_of_year = recovered_day;
+    } else {
+        getRealWorldTime(m_simulated_seconds, m_day_of_year);
     }
     init();
 }
@@ -51,7 +70,7 @@ void AutoEffect::setMode(AutoModeType mode) {
 }
 
 void AutoEffect::toggleHyperlapse() {
-    setMode(isHyperlapse() ? AutoModeType::HYPERLAPSE : AutoModeType::REAL_TIME);
+    setMode(isHyperlapse() ? AutoModeType::REAL_TIME : AutoModeType::HYPERLAPSE);
 }
 
 void AutoEffect::setSimulatedTime(double total_seconds) {
@@ -79,6 +98,19 @@ float AutoEffect::calculateMoonPhaseFactor() const {
 void AutoEffect::updateWithMasterTime(uint32_t delta_ms, double simulated_seconds, uint16_t day_of_year) {
     m_simulated_seconds = simulated_seconds;
     m_day_of_year = day_of_year;
+
+    // If running in hyperlapse mode locally, advance internal simulated time multiplier smoothly
+    if (isHyperlapse()) {
+        double time_step_sec = (delta_ms / 1000.0) * 300.0;
+        m_simulated_seconds += time_step_sec;
+        if (m_simulated_seconds >= Config::SECONDS_IN_DAY) {
+            m_simulated_seconds -= Config::SECONDS_IN_DAY;
+            m_day_of_year++;
+            if (m_day_of_year > 365) {
+                m_day_of_year = 1;
+            }
+        }
+    }
 
     // Periodic watchdog state checkpointing (every 1000ms) to ensure seamless recovery
     m_watchdog_save_timer_ms += delta_ms;
@@ -123,6 +155,9 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
     if (m_effect_temp_buffer.size() != total_bytes) {
         m_effect_temp_buffer.resize(total_bytes);
     }
+
+    // Guard against uninitialized memory / full panel whiteouts by explicitly clearing the buffer to black first
+    std::fill(buffer, buffer + total_bytes, 0);
 
     const double current_hour = m_simulated_seconds / 3600.0;
     const bool is_daytime = (current_hour >= 5.0 && current_hour <= 19.5);

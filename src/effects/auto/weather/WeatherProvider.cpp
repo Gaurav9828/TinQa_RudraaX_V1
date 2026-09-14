@@ -1,7 +1,13 @@
 #include "WeatherProvider.h"
 #include <cmath>
+#include <algorithm>
 
-WeatherProvider::WeatherProvider() {}
+namespace {
+    inline float smoothstep(float edge0, float edge1, float x) {
+        float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
+}
 
 float WeatherProvider::getPseudoRandom(uint16_t day, uint8_t seed_offset) const {
     uint32_t hash = day * 2654435761u + seed_offset * 1013904223u;
@@ -12,45 +18,62 @@ float WeatherProvider::getPseudoRandom(uint16_t day, uint8_t seed_offset) const 
 ActiveWeatherState WeatherProvider::evaluateWeather(uint16_t day_of_year, double current_hour_24) {
     DailyWeatherProfile base_profile = KedarnathClimateData::getHistoricalProfile(day_of_year);
     
-    bool is_daytime = (current_hour_24 >= 6.0 && current_hour_24 <= 18.5);
-    CloudCoverage coverage = is_daytime ? base_profile.day_coverage : base_profile.night_coverage;
+    // 1. Smooth Day vs Night Profile Interpolation
+    float day_weight = 0.0f;
+    if (current_hour_24 >= 6.0 && current_hour_24 <= 18.0) {
+        day_weight = 1.0f;
+    } else if (current_hour_24 > 5.0 && current_hour_24 < 6.0) {
+        day_weight = smoothstep(5.0f, 6.0f, static_cast<float>(current_hour_24));
+    } else if (current_hour_24 > 18.0 && current_hour_24 < 19.0) {
+        day_weight = 1.0f - smoothstep(18.0f, 19.0f, static_cast<float>(current_hour_24));
+    }
 
-    // 1. Inject Natural Random Anomalies
+    auto mapCoverageToDensity = [](CloudCoverage cov) -> float {
+        switch (cov) {
+            case CloudCoverage::CLEAR:       return 0.05f;
+            case CloudCoverage::MID_CLOUDY:  return 0.45f;
+            case CloudCoverage::FULL_CLOUDY: return 0.88f;
+        }
+        return 0.05f;
+    };
+
+    float day_density = mapCoverageToDensity(base_profile.day_coverage);
+    float night_density = mapCoverageToDensity(base_profile.night_coverage);
+    float target_density = day_density * day_weight + night_density * (1.0f - day_weight);
+
+    // 2. Natural Anomaly Rolls
     float anomaly_roll = getPseudoRandom(day_of_year, 1);
-    
-    // Monsoon Anomaly: 12% chance of clear sunny day in heavy monsoon season
+    CloudCoverage effective_coverage = (day_weight > 0.5f) ? base_profile.day_coverage : base_profile.night_coverage;
+
     if (day_of_year >= 182 && day_of_year <= 273 && anomaly_roll < 0.12f) {
-        coverage = CloudCoverage::CLEAR;
-    }
-    // Winter Anomaly: 15% chance of overcast snow clouds in clear winter
-    else if ((day_of_year < 90 || day_of_year > 300) && anomaly_roll > 0.85f) {
-        coverage = CloudCoverage::FULL_CLOUDY;
-    }
-
-    // 2. Map Coverage to Continuous Cloud Density (0.0 to 1.0)
-    float density = 0.0f;
-    switch (coverage) {
-        case CloudCoverage::CLEAR:       density = 0.05f; break;
-        case CloudCoverage::MID_CLOUDY:  density = 0.45f; break;
-        case CloudCoverage::FULL_CLOUDY: density = 0.88f; break;
+        effective_coverage = CloudCoverage::CLEAR;
+        target_density = 0.05f;
+    } else if ((day_of_year < 90 || day_of_year > 300) && anomaly_roll > 0.85f) {
+        effective_coverage = CloudCoverage::FULL_CLOUDY;
+        target_density = 0.88f;
     }
 
-    // Add subtle continuous floating fluctuation
-    float hourly_drift = std::sin(static_cast<float>(current_hour_24) * 0.5f) * 0.08f;
-    density = std::max(0.0f, std::min(1.0f, density + hourly_drift));
+    // Continuous floating drift
+    float hourly_drift = std::sin(static_cast<float>(current_hour_24) * 0.523598f) * 0.06f; 
+    float final_density = std::clamp(target_density + hourly_drift, 0.0f, 1.0f);
 
-    // 3. Determine Aurora Night (20 random clear winter nights)
-    bool is_winter = (day_of_year <= 75 || day_of_year >= 310);
-    float aurora_roll = getPseudoRandom(day_of_year, 2);
-    // ~20 out of ~130 winter days = ~15% chance on clear winter nights
-    bool is_aurora_night = is_winter && !is_daytime && (coverage == CloudCoverage::CLEAR) && (aurora_roll < 0.15f);
+    // 3. Precise Astronomical Lunar Phase Calculation
+    // Reference New Moon for 2026: Day 254 (September 11, 2026)
+    const float synodic_month = 29.53059f;
+    float days_since_ref = static_cast<float>(day_of_year) - 254.0f;
+    float phase = std::fmod(days_since_ref, synodic_month);
+    if (phase < 0.0f) phase += synodic_month;
+    float cycle_fraction = phase / synodic_month;
+    
+    // Illumination factor: 0.0 (New Moon / No Moon) to 1.0 (Full Moon)
+    float moon_phase_factor = (1.0f - std::cos(cycle_fraction * 2.0f * 3.14159265f)) * 0.5f;
 
-    bool is_thunder = (coverage == CloudCoverage::FULL_CLOUDY) && (getPseudoRandom(day_of_year, 3) > 0.4f);
+    // 4. Special Features & Thunder Logic
+    bool is_thunder = (final_density > 0.60f) && (getPseudoRandom(day_of_year, 3) > 0.40f);
+    bool is_thunder_possible = is_thunder && (current_hour_24 >= 14.0 && current_hour_24 <= 18.0);
 
     return ActiveWeatherState{
-        coverage,
-        density,
-        is_aurora_night,
-        is_thunder
+        final_density,
+        is_thunder_possible
     };
 }

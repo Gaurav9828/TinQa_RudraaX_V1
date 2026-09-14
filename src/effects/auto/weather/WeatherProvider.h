@@ -1,20 +1,23 @@
 #pragma once
 
 #include "config/KedarnathClimateData.h"
-#include <random>
+#include <cstdint>
+
+#ifndef ACTIVE_WEATHER_STATE_H
+#define ACTIVE_WEATHER_STATE_H
 
 struct ActiveWeatherState {
-    CloudCoverage current_coverage;
-    float cloud_density;      // 0.0f (Clear) to 1.0f (Full Heavy Cloud)
-    bool is_aurora_night;     // True for ~20 random clear winter nights
-    bool is_thunder_possible; // True during high cloud density
+    float cloud_density;
+    bool is_thunder_possible;
 };
+
+#endif // ACTIVE_WEATHER_STATE_H
 
 class WeatherProvider {
 public:
-    WeatherProvider();
-    
-    // Evaluate weather state for a specific time and day of year
+    WeatherProvider() = default;
+
+    // Evaluates weather state with smooth day/night temporal transitions
     ActiveWeatherState evaluateWeather(uint16_t day_of_year, double current_hour_24);
 
 private:

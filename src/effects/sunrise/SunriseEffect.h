@@ -21,7 +21,6 @@ public:
 
     void renderWithPhase(uint8_t* buffer, size_t width, size_t height, float phase, float direction_degrees);
 
-    // Added getter for autonomous state machine cycling
     float getProgress() const { return m_progress; }
 
 private:
@@ -38,7 +37,11 @@ private:
     std::vector<std::pair<size_t, size_t>> m_peak_coordinates;
     float m_sun_direction_x = 1.0f;
     float m_sun_direction_y = 0.0f;
-    float m_progress = 0.0f; // Starts at 0.0f (Night) and progresses to 1.0f (Warm Daylight)
+    float m_progress = 0.0f; 
+    
+    // Smooth dampening state variables to eliminate hyperlapse stepping/flicker
+    float m_smoothed_progress = 0.0f;
+    std::vector<uint8_t> m_previous_frame_buffer;
 };
 
 #endif // SUNRISE_EFFECT_H

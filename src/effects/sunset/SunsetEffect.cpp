@@ -1,13 +1,16 @@
 #include "effects/sunset/SunsetEffect.h"
 #include <cmath>
 #include <algorithm>
+#include <cstring>
 
 SunsetEffect::SunsetEffect() {
     init();
 }
 
 void SunsetEffect::init() {
-    m_progress = 1.0f; // Starts at 1.0 (Full Warm Daylight matching Sunrise end)
+    m_progress = 1.0f; 
+    m_smoothed_progress = 1.0f;
+    m_previous_frame_buffer.clear();
     parseConfig();
 }
 
@@ -34,7 +37,6 @@ float SunsetEffect::clampf(float val, float min_val, float max_val) {
 SunsetEffect::ColorRGB SunsetEffect::getSunsetColor(float phase) const {
     phase = clampf(phase, 0.0f, 1.0f);
 
-    // Exact matching palette with SunriseEffect
     const ColorRGB COLOR_OFF           = {  0.0f,   0.0f,   0.0f};
     const ColorRGB COLOR_DEEP_RED      = {220.0f,  15.0f,   0.0f}; 
     const ColorRGB COLOR_GOLDEN_RED    = {255.0f,  65.0f,   0.0f}; 
@@ -92,13 +94,29 @@ void SunsetEffect::render(uint8_t* buffer, size_t width, size_t height) {
 void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height, float phase, float direction_degrees) {
     if (!buffer || width == 0 || height == 0) return;
 
+    size_t total_bytes = width * height * 3;
+    if (m_previous_frame_buffer.size() != total_bytes) {
+        m_previous_frame_buffer.resize(total_bytes, 0);
+    }
+
+    // Apply exponential smoothing (Lerp) to phase progress to eliminate sharp drop-offs during hyperlapse
+    float smoothing_factor = 0.25f; 
+    m_smoothed_progress += (phase - m_smoothed_progress) * smoothing_factor;
+
+    // Safety gate: If smoothed phase and target phase are near zero, clear buffer completely
+    if (m_smoothed_progress <= 0.01f && phase <= 0.01f) {
+        std::fill(buffer, buffer + total_bytes, 0);
+        std::fill(m_previous_frame_buffer.begin(), m_previous_frame_buffer.end(), 0);
+        m_smoothed_progress = 0.0f;
+        return;
+    }
+
     updateDirectionVector(direction_degrees);
 
     float max_possible_dist = std::hypot(static_cast<float>(width), static_cast<float>(height));
-    float current_wave_radius = phase * max_possible_dist * 1.4f;
+    float current_wave_radius = m_smoothed_progress * max_possible_dist * 1.4f;
 
-    // Brightness scale matched seamlessly with Sunrise (1.0f -> 0.25f as phase decreases)
-    float global_brightness_scale = 0.25f + (phase * 0.75f); 
+    float global_brightness_scale = 0.25f + (m_smoothed_progress * 0.75f); 
 
     for (size_t y = 0; y < height; ++y) {
         for (size_t x = 0; x < width; ++x) {
@@ -137,9 +155,27 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
             rgb.b *= global_brightness_scale;
 
             size_t pixel_index = (y * width + x) * 3;
-            buffer[pixel_index]     = static_cast<uint8_t>(clampf(rgb.r, 0.0f, 255.0f));
-            buffer[pixel_index + 1] = static_cast<uint8_t>(clampf(rgb.g, 0.0f, 255.0f));
-            buffer[pixel_index + 2] = static_cast<uint8_t>(clampf(rgb.b, 0.0f, 255.0f));
+
+            uint8_t target_r = static_cast<uint8_t>(clampf(rgb.r, 0.0f, 255.0f));
+            uint8_t target_g = static_cast<uint8_t>(clampf(rgb.g, 0.0f, 255.0f));
+            uint8_t target_b = static_cast<uint8_t>(clampf(rgb.b, 0.0f, 255.0f));
+
+            // Temporal Frame-to-Frame Blending to prevent abrupt shade dropping
+            uint8_t prev_r = m_previous_frame_buffer[pixel_index];
+            uint8_t prev_g = m_previous_frame_buffer[pixel_index + 1];
+            uint8_t prev_b = m_previous_frame_buffer[pixel_index + 2];
+
+            uint8_t final_r = static_cast<uint8_t>(prev_r + (static_cast<float>(target_r - prev_r) * 0.5f));
+            uint8_t final_g = static_cast<uint8_t>(prev_g + (static_cast<float>(target_g - prev_g) * 0.5f));
+            uint8_t final_b = static_cast<uint8_t>(prev_b + (static_cast<float>(target_b - prev_b) * 0.5f));
+
+            buffer[pixel_index]     = final_r;
+            buffer[pixel_index + 1] = final_g;
+            buffer[pixel_index + 2] = final_b;
+
+            m_previous_frame_buffer[pixel_index]     = final_r;
+            m_previous_frame_buffer[pixel_index + 1] = final_g;
+            m_previous_frame_buffer[pixel_index + 2] = final_b;
         }
     }
 }

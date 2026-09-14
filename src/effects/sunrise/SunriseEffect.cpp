@@ -1,6 +1,7 @@
 #include "effects/sunrise/SunriseEffect.h"
 #include <cmath>
 #include <algorithm>
+#include <cstring>
 
 SunriseEffect::SunriseEffect() {
     init();
@@ -8,6 +9,8 @@ SunriseEffect::SunriseEffect() {
 
 void SunriseEffect::init() {
     m_progress = 0.0f;
+    m_smoothed_progress = 0.0f;
+    m_previous_frame_buffer.clear();
     parseConfig();
 }
 
@@ -99,13 +102,30 @@ void SunriseEffect::render(uint8_t* buffer, size_t width, size_t height) {
 void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height, float phase, float direction_degrees) {
     if (!buffer || width == 0 || height == 0) return;
 
+    size_t total_bytes = width * height * 3;
+    if (m_previous_frame_buffer.size() != total_bytes) {
+        m_previous_frame_buffer.resize(total_bytes, 0);
+    }
+
+    // Apply exponential smoothing (Lerp) to the phase progress based on TARGET_FPS
+    // This removes abrupt multi-step jumps during high-speed hyperlapse increments
+    float smoothing_factor = 0.25f; // Adjust between 0.15 (smoother) and 0.40 (snappier)
+    m_smoothed_progress += (phase - m_smoothed_progress) * smoothing_factor;
+
+    // Safety gate: If smoothed phase is near zero, keep buffer pure black
+    if (m_smoothed_progress <= 0.01f && phase <= 0.01f) {
+        std::fill(buffer, buffer + total_bytes, 0);
+        std::fill(m_previous_frame_buffer.begin(), m_previous_frame_buffer.end(), 0);
+        m_smoothed_progress = 0.0f;
+        return;
+    }
+
     updateDirectionVector(direction_degrees);
 
     float max_possible_dist = std::hypot(static_cast<float>(width), static_cast<float>(height));
-    float current_wave_radius = phase * max_possible_dist * 1.4f;
+    float current_wave_radius = m_smoothed_progress * max_possible_dist * 1.4f;
 
-    // Matched scale with Sunset (0.25f -> 1.0f to match full daylight transition seamlessly)
-    float global_brightness_scale = 0.25f + (phase * 0.75f);
+    float global_brightness_scale = 0.25f + (m_smoothed_progress * 0.75f);
 
     for (size_t y = 0; y < height; ++y) {
         for (size_t x = 0; x < width; ++x) {
@@ -144,9 +164,29 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
             rgb.b *= global_brightness_scale;
 
             size_t pixel_index = (y * width + x) * 3;
-            buffer[pixel_index]     = static_cast<uint8_t>(clampf(rgb.r, 0.0f, 255.0f));
-            buffer[pixel_index + 1] = static_cast<uint8_t>(clampf(rgb.g, 0.0f, 255.0f));
-            buffer[pixel_index + 2] = static_cast<uint8_t>(clampf(rgb.b, 0.0f, 255.0f));
+            
+            uint8_t target_r = static_cast<uint8_t>(clampf(rgb.r, 0.0f, 255.0f));
+            uint8_t target_g = static_cast<uint8_t>(clampf(rgb.g, 0.0f, 255.0f));
+            uint8_t target_b = static_cast<uint8_t>(clampf(rgb.b, 0.0f, 255.0f));
+
+            // Temporal Frame-to-Frame Blending (Inter-frame smoothing at target FPS)
+            uint8_t prev_r = m_previous_frame_buffer[pixel_index];
+            uint8_t prev_g = m_previous_frame_buffer[pixel_index + 1];
+            uint8_t prev_b = m_previous_frame_buffer[pixel_index + 2];
+
+            // Blend current calculated color with previous frame to eliminate flicker
+            uint8_t final_r = static_cast<uint8_t>(prev_r + (static_cast<float>(target_r - prev_r) * 0.5f));
+            uint8_t final_g = static_cast<uint8_t>(prev_g + (static_cast<float>(target_g - prev_g) * 0.5f));
+            uint8_t final_b = static_cast<uint8_t>(prev_b + (static_cast<float>(target_b - prev_b) * 0.5f));
+
+            buffer[pixel_index]     = final_r;
+            buffer[pixel_index + 1] = final_g;
+            buffer[pixel_index + 2] = final_b;
+
+            // Save back to history buffer
+            m_previous_frame_buffer[pixel_index]     = final_r;
+            m_previous_frame_buffer[pixel_index + 1] = final_g;
+            m_previous_frame_buffer[pixel_index + 2] = final_b;
         }
     }
 }

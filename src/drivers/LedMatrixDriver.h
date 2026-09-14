@@ -11,6 +11,7 @@ public:
     ~LedMatrixDriver();
 
     bool init();
+    void clear();
     void show(const uint8_t* frameBuffer, size_t size);
 
     // Declared as const to match member function signature

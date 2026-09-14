@@ -18,6 +18,11 @@ bool LedMatrixDriver::init() {
     return true;
 }
 
+void LedMatrixDriver::clear() {
+    uint8_t zero_buffer[Config::MATRIX_WIDTH * Config::MATRIX_HEIGHT * 3] = {0};
+    show(zero_buffer, sizeof(zero_buffer));
+}
+
 inline uint16_t LedMatrixDriver::getPhysicalIndex(uint16_t x, uint16_t y) const {
     // 1. Apply Master / Global Matrix Rotation across the full 32x32 layout
     uint16_t gx = x;

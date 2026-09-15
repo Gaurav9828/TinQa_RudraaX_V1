@@ -12,6 +12,7 @@
 #include "layers/LunarLightingLayer.h"
 // #include "layers/StarfieldLayer.h"
 #include "layers/MeteorShowerLayer.h"
+#include "layers/CloudLayer.h"
 #include "effects/auto/weather/WeatherProvider.h"
 #include "effects/auto/weather/WeatherModifier.h"
 #include "utils/WatchdogManager.h"
@@ -65,8 +66,9 @@ private:
     LunarLightingLayer m_lunar_layer;
     // StarfieldLayer m_starfield_layer;
     MeteorShowerLayer m_meteor_layer;
+    CloudLayer m_cloud_layer;
 
     std::vector<uint8_t> m_effect_temp_buffer;
 };
 
-#endif
+#endif // AUTO_EFFECT_H

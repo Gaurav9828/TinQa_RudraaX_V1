@@ -4,8 +4,6 @@
 #include <vector>
 #include <array>
 
-#define TEST_MODE_ENABLED 1
-
 enum AppState : uint8_t
 {
     STATE_IDLE = 0,
@@ -27,7 +25,8 @@ enum PanelRotation : uint16_t {
 namespace Config
 {
     // Master Test Mode Toggle
-    inline constexpr bool TEST_MODE = (TEST_MODE_ENABLED == 1);
+    constexpr bool ENABLE_TEST_MODE = true;      // Set to false for normal production mode
+    constexpr int TEST_SCENARIO_KEY = 1;
     
     // Default boot state set to STATE_TEST for initial panel orientation checking
     inline constexpr AppState INITIAL_APP_STATE = STATE_AUTO;

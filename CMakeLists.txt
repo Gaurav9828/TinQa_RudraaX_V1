@@ -78,6 +78,8 @@ add_executable(TinQa_RudraaX_V1
     src/utils/TimePersistence.h
     src/drivers/Pcf8563Driver.h
     src/drivers/Pcf8563Driver.cpp
+    src/effects/auto/layers/CloudLayer.h
+    src/effects/auto/layers/CloudLayer.cpp
 )
 
 # Compile PIO Assembly File into C++ Header

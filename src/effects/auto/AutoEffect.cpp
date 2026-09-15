@@ -61,21 +61,21 @@ void AutoEffect::init() {
     m_lunar_layer.init();
     // m_starfield_layer.init();
     m_meteor_layer.init();
+    m_cloud_layer.init();
 
     m_effect_temp_buffer.clear();
 }
 
 void AutoEffect::setMode(AutoModeType mode) {
     if (m_mode != AutoModeType::HYPERLAPSE && mode == AutoModeType::HYPERLAPSE) {
-        // Save current real-time clock position before entering hyperlapse
         m_saved_real_time_seconds = m_simulated_seconds;
-        
-        // Start hyperlapse precisely at sunrise (5:00 AM) with hyperlapse intent
-        m_hyperlapse_seconds = 5.0 * 3600.0;
+        // Force hyperlapse to start cleanly at 5:00 AM (18000 seconds) instead of reversing
+        m_hyperlapse_seconds = 5.0 * 3600.0; 
+        m_effect_temp_buffer.clear(); // Clear cached frame buffers
     } 
     else if (m_mode == AutoModeType::HYPERLAPSE && mode == AutoModeType::REAL_TIME) {
-        // Restore normal real-time clock position when exiting hyperlapse
         m_simulated_seconds = m_saved_real_time_seconds;
+        m_effect_temp_buffer.clear();
     }
     m_mode = mode;
 }
@@ -129,11 +129,8 @@ void AutoEffect::updateWithMasterTime(uint32_t delta_ms, double simulated_second
     m_day_of_year = std::clamp(day_of_year, static_cast<uint16_t>(1), static_cast<uint16_t>(365));
 
     if (isHyperlapse()) {
-        // Real-time clock remains completely independent and static at the saved time
         m_simulated_seconds = m_saved_real_time_seconds;
 
-        // Advance hyperlapse playback continuously so that a full 24-hour cycle completes
-        // within the configured hyperlapse duration (e.g., 1 minute).
         double cycle_duration_sec = static_cast<double>(Config::HYPERLAPSE_DURATION_MINUTES) * 60.0;
         if (cycle_duration_sec <= 0.0) cycle_duration_sec = 60.0;
         
@@ -142,17 +139,15 @@ void AutoEffect::updateWithMasterTime(uint32_t delta_ms, double simulated_second
         
         m_hyperlapse_seconds += time_step_sec;
         if (m_hyperlapse_seconds >= Config::SECONDS_IN_DAY) {
-            m_hyperlapse_seconds -= Config::SECONDS_IN_DAY; // Loop continuously through full day/night cycles
+            m_hyperlapse_seconds -= Config::SECONDS_IN_DAY;
         }
     } else {
-        // Normal mode: clock runs strictly on normal master time
         m_simulated_seconds = normalized_master;
         m_saved_real_time_seconds = normalized_master;
     }
 
     m_time_initialized = true;
 
-    // Persist running real-time state to non-volatile memory checkpoints every 1000ms
     m_watchdog_save_timer_ms += delta_ms;
     if (m_watchdog_save_timer_ms >= 1000) {
         m_watchdog_save_timer_ms = 0;
@@ -165,6 +160,7 @@ void AutoEffect::updateWithMasterTime(uint32_t delta_ms, double simulated_second
     m_sunset_effect.update(delta_ms);
     m_aurora_effect.update(delta_ms);
     m_thunder_effect.update(delta_ms);
+    m_cloud_layer.update(delta_ms, isHyperlapse());
 
     double active_rendering_seconds = isHyperlapse() ? m_hyperlapse_seconds : m_simulated_seconds;
     const double current_hour = active_rendering_seconds / 3600.0;
@@ -199,7 +195,6 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
     std::fill(buffer, buffer + total_bytes, 0);
 
     if (!m_time_initialized) {
-        // Suppress rendering until the master time is initialized to prevent startup flash/sunrise jump
         return;
     }
 
@@ -217,6 +212,7 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
         weather
     };
 
+    // 1. Render Base Layers & Effects
     m_solar_layer.render(buffer, width, height, ctx);
     m_lunar_layer.render(buffer, width, height, ctx);
     // m_starfield_layer.render(buffer, width, height, ctx);
@@ -273,4 +269,10 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
     }
 
     WeatherModifier::applyCloudCover(buffer, width, height, weather, is_daytime);
+
+    // ========================================================================
+    // STEP 3: Render Moving Cloud Layer on top of EVERY effect in Auto Mode
+    // ========================================================================
+    CloudDensityTier cloud_tier = static_cast<CloudDensityTier>(weather.cloud_density);
+    m_cloud_layer.render(buffer, width, height, cloud_tier, is_daytime);
 }

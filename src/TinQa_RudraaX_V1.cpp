@@ -239,6 +239,15 @@ void core1_entry() {
     }
 }
 
+// Helper function to blank out buffers during transitions
+void clearMatrixBuffers() {
+    std::memset(renderBuffer, 0, MATRIX_BUFFER_BYTES);
+    std::memset(displayBuffer, 0, MATRIX_BUFFER_BYTES);
+    if (isCore1Ready) {
+        multicore_fifo_push_timeout_us(FIFO_CMD_RENDER, 5000);
+    }
+}
+
 // ============================================================================
 // MAIN SYSTEM LOOP (CORE 0)
 // ============================================================================
@@ -284,38 +293,57 @@ int main() {
 
         updateSystemClock(deltaMs);
 
-        // Touch Input Processing
+        // Inside your main loop where touch inputs are checked:
         if (isTouchDriverReady) {
             touchDriver.update();
-
-            // Inside your main event polling loop:
 
             if (touchDriver.wasPad1SingleClicked()) {
                 if (currentState != AppState::STATE_AUTO || autoEffect.isHyperlapse()) {
                     LOG_INFO("MAIN", "Switching to Normal Auto Mode via Short-Tap");
+                    clearMatrixBuffers(); // Clear screen artifacts instantly
                     currentState = AppState::STATE_AUTO;
                     autoEffect.setMode(AutoModeType::REAL_TIME);
                     activeEffect = &autoEffect;
-                } else {
-                    LOG_INFO("MAIN", "Already in Normal Auto Mode - Short-Tap Ignored");
+                    activeEffect->init();
+                    sleep_ms(50); // Small pause to ensure clean slate
                 }
             }
 
             if (touchDriver.wasPad1LongPressed()) {
                 if (currentState != AppState::STATE_AUTO || !autoEffect.isHyperlapse()) {
-                    LOG_INFO("MAIN", "Switching to Hyperlapse Sunrise Mode via Long-Press");
+                    LOG_INFO("MAIN", "Switching to Hyperlapse Mode at 5:00 AM via Long-Press");
+                    clearMatrixBuffers(); // Clear screen artifacts instantly
                     currentState = AppState::STATE_AUTO;
-                    autoEffect.setMode(AutoModeType::HYPERLAPSE);
+                    autoEffect.setMode(AutoModeType::HYPERLAPSE); // Automatically sets hyperlapse to 5:00 AM
                     activeEffect = &autoEffect;
-                } else {
-                    LOG_INFO("MAIN", "Already in Hyperlapse Mode - Long-Press Ignored");
+                    activeEffect->init();
+                    sleep_ms(50); // Small pause to ensure clean slate
                 }
             }
-            if (touchDriver.wasPad2SingleClicked()) { switchToEffect(STATE_SUNRISE); }
-            if (touchDriver.wasPad2LongPressed()) { switchToEffect(STATE_SUNSET); }
-            if (touchDriver.wasPad3Pressed()) { switchToEffect(STATE_THUNDER); }
-            if (touchDriver.wasPad4Pressed()) { switchToEffect(STATE_AURORA); }
-            if (touchDriver.wasPad5Pressed()) { togglePower(); }
+            
+            if (touchDriver.wasPad2SingleClicked()) { 
+                clearMatrixBuffers();
+                switchToEffect(STATE_SUNRISE); 
+                sleep_ms(50);
+            }
+            if (touchDriver.wasPad2LongPressed()) { 
+                clearMatrixBuffers();
+                switchToEffect(STATE_SUNSET); 
+                sleep_ms(50);
+            }
+            if (touchDriver.wasPad3Pressed()) { 
+                clearMatrixBuffers();
+                switchToEffect(STATE_THUNDER); 
+                sleep_ms(50);
+            }
+            if (touchDriver.wasPad4Pressed()) { 
+                clearMatrixBuffers();
+                switchToEffect(STATE_AURORA); 
+                sleep_ms(50);
+            }
+            if (touchDriver.wasPad5Pressed()) { 
+                togglePower(); 
+            }
         }
 
         if (isAmbientSensorReady) {

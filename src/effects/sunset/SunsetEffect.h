@@ -19,7 +19,7 @@ public:
     void render(uint8_t* buffer, size_t width, size_t height) override;
     const char* getName() const override { return "Mountain Sunset Glow"; }
 
-    void renderWithPhase(uint8_t* buffer, size_t width, size_t height, float phase, float direction_degrees);
+    void renderWithPhase(uint8_t* buffer, size_t width, size_t height, float phase, float direction_degrees, float cloud_density = 0.0f);
 
     float getProgress() const { return m_progress; }
 
@@ -39,7 +39,6 @@ private:
     float m_sun_direction_y = 0.0f;
     float m_progress = 1.0f; 
 
-    // Smooth dampening state variables to eliminate hyperlapse stepping/flicker
     float m_smoothed_progress = 1.0f;
     std::vector<uint8_t> m_previous_frame_buffer;
 };

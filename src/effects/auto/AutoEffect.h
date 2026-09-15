@@ -10,7 +10,6 @@
 #include "effects/thunder/ThunderEffect.h"
 #include "layers/SolarLightingLayer.h"
 #include "layers/LunarLightingLayer.h"
-// #include "layers/StarfieldLayer.h"
 #include "layers/MeteorShowerLayer.h"
 #include "layers/CloudLayer.h"
 #include "effects/auto/weather/WeatherProvider.h"
@@ -31,6 +30,7 @@ public:
     void setMode(AutoModeType mode);
     void toggleHyperlapse();
     bool isHyperlapse() const { return m_mode == AutoModeType::HYPERLAPSE; }
+    bool isThunderActive() const; // Exposes thunder status safely
 
     void setSimulatedTime(double total_seconds);
     void setDayOfYear(uint16_t day_of_year);
@@ -64,7 +64,6 @@ private:
 
     SolarLightingLayer m_solar_layer;
     LunarLightingLayer m_lunar_layer;
-    // StarfieldLayer m_starfield_layer;
     MeteorShowerLayer m_meteor_layer;
     CloudLayer m_cloud_layer;
 

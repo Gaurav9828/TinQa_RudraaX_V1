@@ -9,7 +9,7 @@ SunsetEffect::SunsetEffect() {
 
 void SunsetEffect::init() {
     m_progress = 1.0f; 
-    m_smoothed_progress = -1.0f; // -1.0f flags uninitialized state for instant first-frame snap
+    m_smoothed_progress = -1.0f; 
     m_previous_frame_buffer.clear();
     parseConfig();
 }
@@ -92,10 +92,10 @@ void SunsetEffect::update(uint32_t delta_ms) {
 }
 
 void SunsetEffect::render(uint8_t* buffer, size_t width, size_t height) {
-    renderWithPhase(buffer, width, height, m_progress, Config::EAST_DIRECTION_DEGREES - 180.0f);
+    renderWithPhase(buffer, width, height, m_progress, Config::EAST_DIRECTION_DEGREES - 180.0f, 0.0f);
 }
 
-void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height, float phase, float direction_degrees) {
+void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height, float phase, float direction_degrees, float cloud_density) {
     if (!buffer || width == 0 || height == 0) return;
 
     size_t total_bytes = width * height * 3;
@@ -103,7 +103,6 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
         m_previous_frame_buffer.resize(total_bytes, 0);
     }
 
-    // Instantly snap smoothed progress on first frame to prevent animation/replay pop
     bool is_first_frame = (m_smoothed_progress < 0.0f);
     if (is_first_frame) {
         m_smoothed_progress = phase;
@@ -125,7 +124,8 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
     float current_wave_radius = m_smoothed_progress * max_possible_dist * 1.6f;
 
     float p = clampf(m_smoothed_progress, 0.0f, 1.0f);
-    float global_brightness_scale = p * p * (3.0f - 2.0f * p);
+    float cloud_dimming = 1.0f - (clampf(cloud_density, 0.0f, 1.0f) * 0.35f);
+    float global_brightness_scale = (p * p * (3.0f - 2.0f * p)) * cloud_dimming;
 
     for (size_t y = 0; y < height; ++y) {
         for (size_t x = 0; x < width; ++x) {
@@ -175,7 +175,6 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
 
             uint8_t final_r, final_g, final_b;
             if (is_first_frame) {
-                // Instantly set target values on first frame to eliminate fade-in/replay lag
                 final_r = target_r;
                 final_g = target_g;
                 final_b = target_b;

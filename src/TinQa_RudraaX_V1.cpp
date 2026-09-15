@@ -61,6 +61,9 @@ static uint16_t g_day_of_year = 150;
 static double g_simulated_seconds = 0.0;
 static uint32_t g_time_save_timer_ms = 0;
 
+static bool isShuttingDown = false;
+static uint32_t shutdownTimerMs = 0;
+constexpr uint32_t SHUTDOWN_ANIMATION_DURATION_MS = 5000; // 5 seconds
 // Effect Subsystem Instances
 static IEffect *activeEffect = nullptr;
 static ThunderEffect thunderEffect;
@@ -100,7 +103,7 @@ static StartupEffect startupEffect;
 
 const char* getAppStateName(AppState state) {
     switch (state) {
-        case STATE_IDLE:    return "IDLE (POWER OFF)";
+        case STATE_IDLE:    return "STANDBY (SLEEP MODE)";
         case STATE_THUNDER: return "THUNDER_EFFECT";
         case STATE_AURORA:  return "AURORA_EFFECT";
         case STATE_SUNRISE: return "SUNRISE_EFFECT";
@@ -204,20 +207,25 @@ void switchToEffect(AppState newState) {
 }
 
 void togglePower() {
-    isPoweredOn = !isPoweredOn;
-
-    if (!isPoweredOn) {
+    if (isPoweredOn && !isShuttingDown) {
+        // User wants to power OFF, but let's play the shutdown/startup effect first
+        isShuttingDown = true;
+        shutdownTimerMs = 0;
+        
+        // Save current active state before shutting down
         if (currentState != STATE_IDLE) {
             lastActiveState = currentState;
         }
-        currentState = STATE_IDLE;
-        activeEffect = nullptr;
         
-        std::memset(renderBuffer, 0, sizeof(renderBuffer));
-        std::memset(displayBuffer, 0, sizeof(displayBuffer));
-        
-        LOG_INFO("POWER_CTRL", "System Powered OFF. Matrix buffer zeroed out.");
-    } else {
+        // Switch active effect back to startup effect for the exit transition
+        activeEffect = &startupEffect;
+        startupEffect.init();
+        LOG_INFO("POWER_CTRL", "Power off requested. Playing startup/shutdown effect for 5 seconds...");
+    } 
+    else if (!isPoweredOn) {
+        // Turning power ON from standby
+        isPoweredOn = true;
+        isShuttingDown = false;
         currentState = (lastActiveState != STATE_IDLE) ? lastActiveState : STATE_TEST;
         setEffectPointer(currentState);
         LOG_INFO("POWER_CTRL", "System Powered ON. Restoring state: [%s]", getAppStateName(currentState));
@@ -290,6 +298,61 @@ int main() {
         if (deltaMs > 500) {
             deltaMs = 16; 
         }
+
+        // ==========================================
+        // GRACEFUL SHUTDOWN ANIMATION PHASE
+        // ==========================================
+        if (isShuttingDown) {
+            shutdownTimerMs += deltaMs;
+            
+            // Update and render the startup effect as a shutdown exit visual
+            startupEffect.update(deltaMs);
+            startupEffect.render(renderBuffer, Config::MATRIX_WIDTH, Config::MATRIX_HEIGHT);
+
+            if (shutdownTimerMs >= SHUTDOWN_ANIMATION_DURATION_MS || startupEffect.isComplete()) {
+                // Animation finished, now officially enter standby power-off state
+                isShuttingDown = false;
+                isPoweredOn = false;
+                currentState = STATE_IDLE;
+                activeEffect = nullptr;
+                clearMatrixBuffers();
+                LOG_INFO("POWER_CTRL", "Shutdown animation complete. System now in Standby Sleep Mode.");
+            }
+
+            // Push buffer to matrix driver
+            if (isCore1Ready) {
+                std::memcpy(displayBuffer, renderBuffer, MATRIX_BUFFER_BYTES);
+                multicore_fifo_push_timeout_us(FIFO_CMD_RENDER, 5000);
+            }
+
+            sleep_ms(Config::FRAME_INTERVAL_MS);
+            continue;
+        }
+
+        if (!isPoweredOn) {
+            if (isTouchDriverReady) {
+                touchDriver.update();
+                // If Pad 5 (or any touch button) is pressed, wake up!
+                if (touchDriver.wasPad5Pressed() || touchDriver.wasPad1SingleClicked()) {
+                    togglePower(); // Will flip isPoweredOn back to true and restore state
+                }
+            }
+            
+            // Keep matrix blank during standby
+            std::memset(renderBuffer, 0, MATRIX_BUFFER_BYTES);
+            if (isCore1Ready) {
+                std::memcpy(displayBuffer, renderBuffer, MATRIX_BUFFER_BYTES);
+                multicore_fifo_push_timeout_us(FIFO_CMD_RENDER, 5000);
+            }
+
+            // Sleep longer in standby to save CPU cycles and reduce power consumption
+            sleep_ms(50); 
+            continue; // Skip the rest of the heavy rendering loop
+        }
+
+        // ==========================================
+        // NORMAL ACTIVE EXECUTION PATH
+        // ==========================================
 
         updateSystemClock(deltaMs);
 

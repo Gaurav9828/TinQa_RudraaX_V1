@@ -14,6 +14,13 @@ struct Meteor {
     float max_brightness;
     bool active;
     bool brightening;
+    
+    enum class Classification {
+        FAINT_NORMAL,  // ~85%
+        BRIGHT,        // ~14.9%
+        FIREBALL       // ~0.1%
+    };
+    Classification type;
 };
 
 class MeteorShowerLayer {
@@ -22,13 +29,15 @@ public:
     ~MeteorShowerLayer() = default;
 
     void init();
-    void update(uint32_t delta_ms, double current_hour, bool is_hyperlapse);
+    void update(uint32_t delta_ms, double current_hour, uint16_t day_of_year, bool is_hyperlapse, size_t width, size_t height);
     void render(uint8_t* buffer, size_t width, size_t height, float cloud_density);
 
 private:
-    void spawnMeteor(size_t width, size_t height, bool is_mega_meteor);
+    void spawnMeteor(size_t width, size_t height, Meteor::Classification classification);
+    bool isAnnualMeteorShowerDay(uint16_t day_of_year) const;
+    uint32_t calculateSpawnInterval(double current_hour, bool is_hyperlapse, bool is_shower_active) const;
 
-    static constexpr size_t MAX_METEORS = 5;
+    static constexpr size_t MAX_METEORS = 8;
     std::vector<Meteor> m_meteors;
     uint32_t m_spawn_timer_ms;
     int m_meteors_spawned_tonight;

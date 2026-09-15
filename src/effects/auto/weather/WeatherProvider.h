@@ -9,7 +9,9 @@
 struct ActiveWeatherState {
     float cloud_density;
     bool is_thunder_possible;
-    float moon_phase_factor; // Added to pass illumination/phase factor to RenderContext
+    float moon_phase_factor;
+    double sunrise_hour; // Dynamically calculated sunrise for the current day
+    double sunset_hour;  // Dynamically calculated sunset for the current day
 };
 #endif // ACTIVE_WEATHER_STATE_H
 
@@ -17,9 +19,10 @@ class WeatherProvider {
 public:
     WeatherProvider() = default;
 
-    // Evaluates weather state with smooth day/night temporal transitions
-    ActiveWeatherState evaluateWeather(uint16_t day_of_year, double current_hour_24);
+    // Marked const for clean state querying
+    ActiveWeatherState evaluateWeather(uint16_t day_of_year, double current_hour_24) const;
 
 private:
     float getPseudoRandom(uint16_t day, uint8_t seed_offset) const;
+    void calculateSunriseSunset(uint16_t day_of_year, double& out_sunrise, double& out_sunset) const;
 };

@@ -96,10 +96,10 @@ void SunriseEffect::update(uint32_t delta_ms) {
 }
 
 void SunriseEffect::render(uint8_t* buffer, size_t width, size_t height) {
-    renderWithPhase(buffer, width, height, m_progress, Config::EAST_DIRECTION_DEGREES);
+    renderWithPhase(buffer, width, height, m_progress, Config::EAST_DIRECTION_DEGREES, 0.0f);
 }
 
-void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height, float phase, float direction_degrees) {
+void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height, float phase, float direction_degrees, float cloud_density) {
     if (!buffer || width == 0 || height == 0) return;
 
     size_t total_bytes = width * height * 3;
@@ -107,12 +107,9 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
         m_previous_frame_buffer.resize(total_bytes, 0);
     }
 
-    // Apply exponential smoothing (Lerp) to the phase progress based on TARGET_FPS
-    // This removes abrupt multi-step jumps during high-speed hyperlapse increments
-    float smoothing_factor = 0.25f; // Adjust between 0.15 (smoother) and 0.40 (snappier)
+    float smoothing_factor = 0.25f; 
     m_smoothed_progress += (phase - m_smoothed_progress) * smoothing_factor;
 
-    // Safety gate: If smoothed phase is near zero, keep buffer pure black
     if (m_smoothed_progress <= 0.01f && phase <= 0.01f) {
         std::fill(buffer, buffer + total_bytes, 0);
         std::fill(m_previous_frame_buffer.begin(), m_previous_frame_buffer.end(), 0);
@@ -125,7 +122,9 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
     float max_possible_dist = std::hypot(static_cast<float>(width), static_cast<float>(height));
     float current_wave_radius = m_smoothed_progress * max_possible_dist * 1.4f;
 
-    float global_brightness_scale = 0.25f + (m_smoothed_progress * 0.75f);
+    // Dim brightness slightly if cloud density is high
+    float cloud_dimming = 1.0f - (clampf(cloud_density, 0.0f, 1.0f) * 0.35f);
+    float global_brightness_scale = (0.25f + (m_smoothed_progress * 0.75f)) * cloud_dimming;
 
     for (size_t y = 0; y < height; ++y) {
         for (size_t x = 0; x < width; ++x) {
@@ -169,12 +168,10 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
             uint8_t target_g = static_cast<uint8_t>(clampf(rgb.g, 0.0f, 255.0f));
             uint8_t target_b = static_cast<uint8_t>(clampf(rgb.b, 0.0f, 255.0f));
 
-            // Temporal Frame-to-Frame Blending (Inter-frame smoothing at target FPS)
             uint8_t prev_r = m_previous_frame_buffer[pixel_index];
             uint8_t prev_g = m_previous_frame_buffer[pixel_index + 1];
             uint8_t prev_b = m_previous_frame_buffer[pixel_index + 2];
 
-            // Blend current calculated color with previous frame to eliminate flicker
             uint8_t final_r = static_cast<uint8_t>(prev_r + (static_cast<float>(target_r - prev_r) * 0.5f));
             uint8_t final_g = static_cast<uint8_t>(prev_g + (static_cast<float>(target_g - prev_g) * 0.5f));
             uint8_t final_b = static_cast<uint8_t>(prev_b + (static_cast<float>(target_b - prev_b) * 0.5f));
@@ -183,7 +180,6 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
             buffer[pixel_index + 1] = final_g;
             buffer[pixel_index + 2] = final_b;
 
-            // Save back to history buffer
             m_previous_frame_buffer[pixel_index]     = final_r;
             m_previous_frame_buffer[pixel_index + 1] = final_g;
             m_previous_frame_buffer[pixel_index + 2] = final_b;

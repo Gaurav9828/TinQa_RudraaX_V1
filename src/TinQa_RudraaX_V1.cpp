@@ -288,18 +288,28 @@ int main() {
         if (isTouchDriverReady) {
             touchDriver.update();
 
+            // Inside your main event polling loop:
+
             if (touchDriver.wasPad1SingleClicked()) {
-                if (currentState == STATE_AUTO) {
+                if (currentState != AppState::STATE_AUTO || autoEffect.isHyperlapse()) {
+                    LOG_INFO("MAIN", "Switching to Normal Auto Mode via Short-Tap");
+                    currentState = AppState::STATE_AUTO;
                     autoEffect.setMode(AutoModeType::REAL_TIME);
+                    activeEffect = &autoEffect;
                 } else {
-                    switchToEffect(STATE_AUTO);
+                    LOG_INFO("MAIN", "Already in Normal Auto Mode - Short-Tap Ignored");
                 }
             }
+
             if (touchDriver.wasPad1LongPressed()) {
-                if (currentState != STATE_AUTO) {
-                    switchToEffect(STATE_AUTO);
+                if (currentState != AppState::STATE_AUTO || !autoEffect.isHyperlapse()) {
+                    LOG_INFO("MAIN", "Switching to Hyperlapse Sunrise Mode via Long-Press");
+                    currentState = AppState::STATE_AUTO;
+                    autoEffect.setMode(AutoModeType::HYPERLAPSE);
+                    activeEffect = &autoEffect;
+                } else {
+                    LOG_INFO("MAIN", "Already in Hyperlapse Mode - Long-Press Ignored");
                 }
-                autoEffect.toggleHyperlapse();
             }
             if (touchDriver.wasPad2SingleClicked()) { switchToEffect(STATE_SUNRISE); }
             if (touchDriver.wasPad2LongPressed()) { switchToEffect(STATE_SUNSET); }

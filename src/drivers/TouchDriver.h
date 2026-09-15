@@ -66,7 +66,7 @@ public:
             }
         }
 
-        // --- Pad 1 (GP9) Press Duration Handler (AUTO / HYPERLAPSE) ---
+    // --- Pad 1 (GP9) Press Duration Handler (AUTO / HYPERLAPSE) ---
         bool pad1Current = gpio_get(pins[0]);
         if (pad1Current && !pad1WasPressed) {
             pad1PressStartTime = now;
@@ -87,6 +87,7 @@ public:
             uint32_t duration = now - pad1PressStartTime;
             pad1WasPressed = false;
 
+            // Only fire short click if long press was NOT triggered during this press session
             if (!pad1LongPressTriggered && duration > Config::Touch::DEBOUNCE_MS && duration < LONG_PRESS_DURATION_MS) {
                 if (now - lastGlobalTouchTime >= GLOBAL_DEBOUNCE_MS) {
                     m_pad1SingleClickReady = true;

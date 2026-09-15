@@ -70,7 +70,7 @@ void AutoEffect::setMode(AutoModeType mode) {
         // Save current real-time clock position before entering hyperlapse
         m_saved_real_time_seconds = m_simulated_seconds;
         
-        // Start hyperlapse precisely at sunrise (5:00 AM) and run through the full day/night cycle
+        // Start hyperlapse precisely at sunrise (5:00 AM) with hyperlapse intent
         m_hyperlapse_seconds = 5.0 * 3600.0;
     } 
     else if (m_mode == AutoModeType::HYPERLAPSE && mode == AutoModeType::REAL_TIME) {

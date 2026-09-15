@@ -15,31 +15,54 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
 
     float daylight = 0.0f;
 
-    // Smoother 24-hour cycle boundaries to completely eliminate frame blinking
+    // Synchronize dawn/dusk boundaries perfectly with Sunrise (ends ~7.0h) and Sunset (starts ~17.0h)
     if (ctx.current_hour >= 5.0 && ctx.current_hour < 7.0) {
         daylight = smoothstep(5.0f, 7.0f, static_cast<float>(ctx.current_hour));
-    } else if (ctx.current_hour >= 7.0 && ctx.current_hour <= 17.5) {
+    } else if (ctx.current_hour >= 7.0 && ctx.current_hour <= 17.0) {
         daylight = 1.0f;
-    } else if (ctx.current_hour > 17.5 && ctx.current_hour <= 19.5) {
-        daylight = 1.0f - smoothstep(17.5f, 19.5f, static_cast<float>(ctx.current_hour));
+    } else if (ctx.current_hour > 17.0 && ctx.current_hour <= 19.0) {
+        daylight = 1.0f - smoothstep(17.0f, 19.0f, static_cast<float>(ctx.current_hour));
     }
 
-    float solar_peak = 0.0f;
+    // Base background colors matching sunrise/sunset endpoints by default
+    float day_r = 245.0f;
+    float day_g = 235.0f;
+    float day_b = 125.0f;
+
+    // Dynamic daytime color progression (Morning -> Vibrant Afternoon Yellow -> Evening)
     if (ctx.current_hour >= 6.0 && ctx.current_hour <= 18.0) {
-        solar_peak = std::sin(static_cast<float>(((ctx.current_hour - 6.0) / 12.0) * Config::PI));
-        solar_peak = std::clamp(solar_peak, 0.0f, 1.0f);
+        float day_progress = static_cast<float>((ctx.current_hour - 6.0) / 12.0);
+        day_progress = std::clamp(day_progress, 0.0f, 1.0f);
+
+        // Milestone 1: Sunrise End / Morning start ({245.0f, 235.0f, 125.0f})
+        float r1 = 245.0f, g1 = 235.0f, b1 = 125.0f;
+        // Milestone 2: Midday / Mid-Afternoon vibrant golden yellow peak
+        float r2 = 255.0f, g2 = 215.0f, b2 =  45.0f;
+        // Milestone 3: Sunset Start / Evening ({245.0f, 235.0f, 125.0f})
+        float r3 = 245.0f, g3 = 235.0f, b3 = 125.0f;
+
+        if (day_progress <= 0.5f) {
+            // Morning to mid-afternoon transition (smoothly warming into bright yellow)
+            float t = day_progress / 0.5f;
+            t = t * t * (3.0f - 2.0f * t); // Smoothstep curve
+            day_r = r1 + (r2 - r1) * t;
+            day_g = g1 + (g2 - g1) * t;
+            day_b = b1 + (b2 - b1) * t;
+        } else {
+            // Afternoon to evening transition (dropping back to sunset entry color)
+            float t = (day_progress - 0.5f) / 0.5f;
+            t = t * t * (3.0f - 2.0f * t); // Smoothstep curve
+            day_r = r2 + (r3 - r2) * t;
+            day_g = g2 + (g3 - g2) * t;
+            day_b = b2 + (b3 - b2) * t;
+        }
     }
 
     const float cloud_day_factor = 1.0f - (ctx.weather.cloud_density * 0.40f);
 
-    // Warm white ambient background spectrum
-    const float day_r = (245.0f + (255.0f - 245.0f) * solar_peak) * cloud_day_factor;
-    const float day_g = (195.0f + (225.0f - 195.0f) * solar_peak) * cloud_day_factor;
-    const float day_b = (90.0f +  (130.0f - 90.0f) * solar_peak) * cloud_day_factor;
-
-    const uint8_t r = static_cast<uint8_t>(std::clamp(day_r * daylight, 0.0f, 255.0f));
-    const uint8_t g = static_cast<uint8_t>(std::clamp(day_g * daylight, 0.0f, 255.0f));
-    const uint8_t b = static_cast<uint8_t>(std::clamp(day_b * daylight, 0.0f, 255.0f));
+    const uint8_t r = static_cast<uint8_t>(std::clamp((day_r * cloud_day_factor) * daylight, 0.0f, 255.0f));
+    const uint8_t g = static_cast<uint8_t>(std::clamp((day_g * cloud_day_factor) * daylight, 0.0f, 255.0f));
+    const uint8_t b = static_cast<uint8_t>(std::clamp((day_b * cloud_day_factor) * daylight, 0.0f, 255.0f));
 
     const size_t total_pixels = width * height;
     for (size_t i = 0; i < total_pixels; ++i) {
@@ -49,8 +72,6 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
     }
 
     // --- Sun Cluster Entity Rendering (10 LEDs) ---
-    // Active during daylight hours, gracefully initializing as sunrise ends (6.0h - 7.0h) 
-    // and fading out as sunset begins (17.0h - 18.0h).
     if (ctx.current_hour >= 6.0 && ctx.current_hour <= 18.0) {
         float sun_visibility = 1.0f;
         if (ctx.current_hour >= 6.0 && ctx.current_hour <= 7.0) {
@@ -59,7 +80,6 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
             sun_visibility = 1.0f - smoothstep(17.0f, 18.0f, static_cast<float>(ctx.current_hour));
         }
 
-        // Cloud attenuation on the sun cluster entity
         sun_visibility *= (1.0f - (ctx.weather.cloud_density * 0.50f));
 
         if (sun_visibility > 0.0f) {
@@ -69,7 +89,6 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
             int matrix_width = static_cast<int>(Config::MATRIX_WIDTH);
             int matrix_height = static_cast<int>(Config::MATRIX_HEIGHT);
 
-            // Trajectory identical to the moon: bottom corner D -> center O -> opposite bottom corner C
             int sun_x = static_cast<int>((1.0f - day_progress) * static_cast<float>(matrix_width - 1));
             sun_x = std::clamp(sun_x, 0, matrix_width - 1);
 
@@ -79,7 +98,6 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
             int sun_y = static_cast<int>(bottom_y - arc_offset);
             sun_y = std::clamp(sun_y, 0, matrix_height - 1);
 
-            // 10 distinct LED cluster offsets relative to the center coordinate (dx, dy, intensity weight)
             struct SunPixel {
                 int dx;
                 int dy;
@@ -87,12 +105,12 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
             };
 
             const SunPixel sun_cluster[10] = {
-                { 0,  0, 1.0f },  // Core center (brightest)
-                {-1,  0, 0.85f}, { 1,  0, 0.85f}, // Horizontal neighbors
-                { 0, -1, 0.85f}, { 0,  1, 0.85f}, // Vertical neighbors
-                {-1, -1, 0.65f}, { 1, -1, 0.65f}, // Diagonal corners
+                { 0,  0, 1.0f },  
+                {-1,  0, 0.85f}, { 1,  0, 0.85f}, 
+                { 0, -1, 0.85f}, { 0,  1, 0.85f}, 
+                {-1, -1, 0.65f}, { 1, -1, 0.65f}, 
                 {-1,  1, 0.65f}, { 1,  1, 0.65f},
-                { 0, -2, 0.50f}   // Extension top LED for rich cluster shape
+                { 0, -2, 0.50f}   
             };
 
             for (const auto& p : sun_cluster) {
@@ -102,13 +120,11 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
                 if (px >= 0 && px < matrix_width && py >= 0 && py < matrix_height) {
                     const size_t pixel_idx = (py * matrix_width + px) * 3;
 
-                    // Rich, dark golden-yellow color distinct from warm white background
                     float brightness = 230.0f * sun_visibility * p.weight;
                     uint8_t sun_r = static_cast<uint8_t>(std::clamp(brightness, 0.0f, 255.0f));
-                    uint8_t sun_g = static_cast<uint8_t>(std::clamp(brightness * 0.75f, 0.0f, 255.0f)); // Deep golden amber green channel
-                    uint8_t sun_b = static_cast<uint8_t>(std::clamp(brightness * 0.02f, 0.0f, 255.0f)); // Minimized blue for vivid dark yellow
+                    uint8_t sun_g = static_cast<uint8_t>(std::clamp(brightness * 0.75f, 0.0f, 255.0f)); 
+                    uint8_t sun_b = static_cast<uint8_t>(std::clamp(brightness * 0.02f, 0.0f, 255.0f)); 
 
-                    // Blend rich dark yellow sun cluster pixels over the warm white background
                     buffer[pixel_idx + 0] = std::min<uint16_t>(255, buffer[pixel_idx + 0] + sun_r);
                     buffer[pixel_idx + 1] = std::min<uint16_t>(255, buffer[pixel_idx + 1] + sun_g);
                     buffer[pixel_idx + 2] = std::min<uint16_t>(255, buffer[pixel_idx + 2] + sun_b);

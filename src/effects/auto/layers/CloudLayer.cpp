@@ -9,8 +9,8 @@ void CloudLayer::init() {
 }
 
 void CloudLayer::update(uint32_t delta_ms, bool is_hyperlapse) {
-    // Scroll faster in hyperlapse mode for visible motion
-    float speed = is_hyperlapse ? 0.02f : 0.005f;
+    // Scroll cloud chunks smoothly across the matrix
+    float speed = is_hyperlapse ? 0.03f : 0.007f;
     m_scroll_x += static_cast<float>(delta_ms) * speed;
 }
 
@@ -19,62 +19,57 @@ void CloudLayer::render(uint8_t* buffer, size_t width, size_t height, CloudDensi
         return;
     }
 
-    // Determine global dimming/blackout factor based on density tier and day/night state
-    uint8_t global_alpha = 255;
-    bool total_blackout_night = false;
+    // Configure shadow dimming alpha and chunk coverage thresholds per tier
+    uint8_t shadow_alpha = 255;
+    float coverage_threshold = 0.70f; 
 
     switch (tier) {
         case CloudDensityTier::LEVEL_1_FEW:
-            global_alpha = is_daytime ? 230 : 240;
+            shadow_alpha = is_daytime ? 170 : 200;
+            coverage_threshold = 0.80f; // Sparse, isolated cloud chunks
             break;
         case CloudDensityTier::LEVEL_2_SCATTERED:
-            global_alpha = is_daytime ? 200 : 210;
+            shadow_alpha = is_daytime ? 130 : 160;
+            coverage_threshold = 0.65f; // Moderate scattered cloud patches
             break;
         case CloudDensityTier::LEVEL_3_BROKEN:
-            global_alpha = is_daytime ? 160 : 170;
+            shadow_alpha = is_daytime ? 90 : 120;
+            coverage_threshold = 0.48f; // Larger interconnected cloud masses with gaps
             break;
         case CloudDensityTier::LEVEL_4_MID_OVERCAST:
-            global_alpha = is_daytime ? 120 : 100;
-            break;
         case CloudDensityTier::LEVEL_5_HEAVY:
-            global_alpha = is_daytime ? 80 : 50;
-            break;
         case CloudDensityTier::LEVEL_6_VERY_HEAVY:
-            global_alpha = is_daytime ? 40 : 15;
-            break;
         case CloudDensityTier::LEVEL_7_THUNDER_STORM:
-            global_alpha = is_daytime ? 20 : 0;
-            if (!is_daytime) total_blackout_night = true;
+            shadow_alpha = is_daytime ? 45 : 15;
+            coverage_threshold = 0.25f; // Dense blanket coverage
             break;
         default:
             break;
     }
 
-    // If severe storm at night, completely black out background
-    if (total_blackout_night) {
-        std::fill(buffer, buffer + (width * height * 3), 0);
-        return;
-    }
-
-    // Threshold mapping based on tier level
-    uint8_t density_threshold = static_cast<uint8_t>(static_cast<int>(tier) * 32);
-
+    // Render organic cloud chunks and shadows across the LED grid
     for (size_t y = 0; y < height; ++y) {
         for (size_t x = 0; x < width; ++x) {
             size_t index = (y * width + x) * 3;
 
-            // Lightweight procedural noise substitute using sine/cosine blending
-            float sample_x = (static_cast<float>(x) + m_scroll_x) * 0.1f;
-            float sample_y = static_cast<float>(y) * 0.1f;
-            float wave = std::sin(sample_x) + std::cos(sample_y);
-            // Map wave from [-2, 2] to [0, 255]
-            uint8_t noise_val = static_cast<uint8_t>((wave + 2.0f) * 63.75f);
+            // Multi-frequency coordinate scaling to form distinct cloud blobs/islands
+            float nx = (static_cast<float>(x) + m_scroll_x) * 0.18f;
+            float ny = static_cast<float>(y) * 0.18f;
 
-            // Apply cloud shadow mask / dimming on top of existing pixels
-            if (noise_val > (255 - density_threshold)) {
-                buffer[index]     = static_cast<uint8_t>((buffer[index]     * global_alpha) / 255);
-                buffer[index + 1] = static_cast<uint8_t>((buffer[index + 1] * global_alpha) / 255);
-                buffer[index + 2] = static_cast<uint8_t>((buffer[index + 2] * global_alpha) / 255);
+            // Blend sine and cosine waves to create organic, rounded cluster shapes
+            float blob_1 = std::sin(nx) * std::cos(ny);
+            float blob_2 = std::sin(nx * 0.5f + ny * 0.7f);
+            float cloud_noise = (blob_1 * 0.65f + blob_2 * 0.35f + 1.0f) * 0.5f; // Normalized to [0, 1]
+
+            // If the noise value exceeds the tier threshold, dim the LEDs to cast a cloud shadow chunk
+            if (cloud_noise >= coverage_threshold) {
+                // Calculate softness gradient near the edges of the cloud chunk
+                float edge_distance = (cloud_noise - coverage_threshold) / (1.0f - coverage_threshold);
+                float factor = std::clamp(static_cast<float>(shadow_alpha) / 255.0f + (1.0f - edge_distance) * 0.2f, 0.05f, 1.0f);
+
+                buffer[index + 0] = static_cast<uint8_t>(buffer[index + 0] * factor);
+                buffer[index + 1] = static_cast<uint8_t>(buffer[index + 1] * factor);
+                buffer[index + 2] = static_cast<uint8_t>(buffer[index + 2] * factor);
             }
         }
     }

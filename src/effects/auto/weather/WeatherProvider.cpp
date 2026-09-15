@@ -31,8 +31,11 @@ ActiveWeatherState WeatherProvider::evaluateWeather(uint16_t day_of_year, double
     auto mapCoverageToDensity = [](CloudCoverage cov) -> float {
         switch (cov) {
             case CloudCoverage::CLEAR:       return 0.05f;
-            case CloudCoverage::MID_CLOUDY:  return 0.45f;
-            case CloudCoverage::FULL_CLOUDY: return 0.88f;
+            case CloudCoverage::FEW:         return 0.15f;
+            case CloudCoverage::SCATTERED:   return 0.30f;
+            case CloudCoverage::BROKEN:      return 0.50f;
+            case CloudCoverage::OVERCAST:    return 0.70f;
+            case CloudCoverage::HEAVY_STORM: return 0.95f;
         }
         return 0.05f;
     };
@@ -41,37 +44,29 @@ ActiveWeatherState WeatherProvider::evaluateWeather(uint16_t day_of_year, double
     float night_density = mapCoverageToDensity(base_profile.night_coverage);
     float target_density = day_density * day_weight + night_density * (1.0f - day_weight);
 
-    // 2. Natural Anomaly Rolls
-    float anomaly_roll = getPseudoRandom(day_of_year, 1);
-    CloudCoverage effective_coverage = (day_weight > 0.5f) ? base_profile.day_coverage : base_profile.night_coverage;
+    // Mild, natural hourly variation for normal days (keeps hyperlapse mostly bright and clear)
+    float hourly_drift = std::sin(static_cast<float>(current_hour_24) * 0.2618f) * 0.04f; 
+    float final_density = std::clamp(target_density + hourly_drift, 0.05f, 1.0f);
 
-    if (day_of_year >= 182 && day_of_year <= 273 && anomaly_roll < 0.12f) {
-        effective_coverage = CloudCoverage::CLEAR;
-        target_density = 0.05f;
-    } else if ((day_of_year < 90 || day_of_year > 300) && anomaly_roll > 0.85f) {
-        effective_coverage = CloudCoverage::FULL_CLOUDY;
-        target_density = 0.88f;
+    // Strict isolation: Only allow the rare daytime storm darkness spike on actual HEAVY_STORM profile days (~4-5 days a year)
+    if (base_profile.day_coverage == CloudCoverage::HEAVY_STORM && (current_hour_24 >= 12.0 && current_hour_24 <= 16.0)) {
+        final_density = 0.95f; // Pitch-black storm condition for these rare days only
     }
 
-    // Continuous floating drift
-    float hourly_drift = std::sin(static_cast<float>(current_hour_24) * 0.523598f) * 0.06f; 
-    float final_density = std::clamp(target_density + hourly_drift, 0.0f, 1.0f);
-
-    // 3. Precise Astronomical Lunar Phase Calculation (Dependent on Date and Hours)
-    // Reference New Moon for 2026: Day 254 (September 11, 2026)
+    // 2. Astronomical Lunar Phase Calculation
     const float synodic_month = 29.53059f;
     float fractional_day = static_cast<float>(day_of_year) + static_cast<float>(current_hour_24 / 24.0);
     float days_since_ref = fractional_day - 254.0f;
     float phase = std::fmod(days_since_ref, synodic_month);
     if (phase < 0.0f) phase += synodic_month;
     float cycle_fraction = phase / synodic_month;
-    
-    // Illumination factor: 0.0 (New Moon / No Moon) to 1.0 (Full Moon)
     float moon_phase_factor = (1.0f - std::cos(cycle_fraction * 2.0f * 3.14159265f)) * 0.5f;
 
-    // 4. Special Features & Thunder Logic
-    bool is_thunder = (final_density > 0.60f) && (getPseudoRandom(day_of_year, 3) > 0.40f);
-    bool is_thunder_possible = is_thunder && (current_hour_24 >= 14.0 && current_hour_24 <= 18.0);
+    // 3. Thunder Logic
+    uint8_t hour_slot = static_cast<uint8_t>(current_hour_24);
+    float hourly_storm_roll = getPseudoRandom(day_of_year * 24 + hour_slot, 3);
+    bool is_thunder = (final_density >= 0.90f) && (hourly_storm_roll > 0.20f);
+    bool is_thunder_possible = is_thunder && (current_hour_24 >= 13.0 && current_hour_24 <= 18.0);
 
     return ActiveWeatherState{
         final_density,

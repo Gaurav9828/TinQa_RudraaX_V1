@@ -42,23 +42,49 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
         float r3 = 245.0f, g3 = 235.0f, b3 = 125.0f;
 
         if (day_progress <= 0.5f) {
-            // Morning to mid-afternoon transition (smoothly warming into bright yellow)
             float t = day_progress / 0.5f;
-            t = t * t * (3.0f - 2.0f * t); // Smoothstep curve
+            t = t * t * (3.0f - 2.0f * t);
             day_r = r1 + (r2 - r1) * t;
             day_g = g1 + (g2 - g1) * t;
             day_b = b1 + (b2 - b1) * t;
         } else {
-            // Afternoon to evening transition (dropping back to sunset entry color)
             float t = (day_progress - 0.5f) / 0.5f;
-            t = t * t * (3.0f - 2.0f * t); // Smoothstep curve
+            t = t * t * (3.0f - 2.0f * t);
             day_r = r2 + (r3 - r2) * t;
             day_g = g2 + (g3 - g2) * t;
             day_b = b2 + (b3 - b2) * t;
         }
     }
 
-    const float cloud_day_factor = 1.0f - (ctx.weather.cloud_density * 0.40f);
+    // --- SMOOTH FADE-IN / FADE-OUT STORM TRANSITION ---
+    float cloud_day_factor = 1.0f - (ctx.weather.cloud_density * 0.30f);
+    float storm_transition_weight = 0.0f;
+
+    if (ctx.weather.cloud_density >= 0.95f && ctx.current_hour >= 10.0 && ctx.current_hour <= 17.5) {
+        // Smoothly fade in storm from 10:00 to 12:00, hold peak, and fade out from 15:00 to 17:50
+        if (ctx.current_hour < 12.0) {
+            storm_transition_weight = smoothstep(10.0f, 12.0f, static_cast<float>(ctx.current_hour));
+        } else if (ctx.current_hour <= 15.0) {
+            storm_transition_weight = 1.0f;
+        } else {
+            storm_transition_weight = 1.0f - smoothstep(15.0f, 17.5f, static_cast<float>(ctx.current_hour));
+        }
+    }
+
+    if (storm_transition_weight > 0.0f) {
+        // Blend cloud dimming factor smoothly
+        float target_cloud_factor = 0.08f;
+        cloud_day_factor = cloud_day_factor * (1.0f - storm_transition_weight) + target_cloud_factor * storm_transition_weight;
+
+        // Smoothly blend background colors toward the grayish-blue storm tone without sudden color pops
+        float storm_r = 120.0f;
+        float storm_g = 140.0f;
+        float storm_b = 175.0f;
+
+        day_r = day_r * (1.0f - storm_transition_weight) + storm_r * storm_transition_weight;
+        day_g = day_g * (1.0f - storm_transition_weight) + storm_g * storm_transition_weight;
+        day_b = day_b * (1.0f - storm_transition_weight) + storm_b * storm_transition_weight;
+    }
 
     const uint8_t r = static_cast<uint8_t>(std::clamp((day_r * cloud_day_factor) * daylight, 0.0f, 255.0f));
     const uint8_t g = static_cast<uint8_t>(std::clamp((day_g * cloud_day_factor) * daylight, 0.0f, 255.0f));
@@ -80,7 +106,9 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
             sun_visibility = 1.0f - smoothstep(17.0f, 18.0f, static_cast<float>(ctx.current_hour));
         }
 
-        sun_visibility *= (1.0f - (ctx.weather.cloud_density * 0.50f));
+        // Sun visibility fades out smoothly alongside the storm weight
+        float sun_storm_dimming = 1.0f - (storm_transition_weight * 0.85f);
+        sun_visibility *= sun_storm_dimming * (1.0f - (ctx.weather.cloud_density * 0.40f));
 
         if (sun_visibility > 0.0f) {
             float day_progress = static_cast<float>((ctx.current_hour - 6.0) / 12.0);

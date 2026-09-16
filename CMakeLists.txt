@@ -63,7 +63,6 @@ add_executable(TinQa_RudraaX_V1
     # Auto Pipeline Layers
     src/effects/auto/layers/SolarLightingLayer.cpp
     src/effects/auto/layers/LunarLightingLayer.cpp
-    src/effects/auto/layers/StarfieldLayer.cpp
     src/effects/auto/layers/MeteorShowerLayer.cpp
 
     # Atmosphere & Overlay Effects

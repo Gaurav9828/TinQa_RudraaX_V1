@@ -160,6 +160,7 @@ void AutoEffect::updateWithMasterTime(uint32_t delta_ms, double simulated_second
     m_thunder_effect.update(delta_ms);
     m_cloud_layer.update(delta_ms, isHyperlapse());
 
+    // --- CONSUMING WEATHER PROVIDER IN UPDATE CYCLE ---
     double active_rendering_seconds = isHyperlapse() ? m_hyperlapse_seconds : m_simulated_seconds;
     const double current_hour = active_rendering_seconds / 3600.0;
     ActiveWeatherState weather = m_weather_provider.evaluateWeather(m_day_of_year, current_hour);
@@ -206,6 +207,7 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
     double active_rendering_seconds = isHyperlapse() ? m_hyperlapse_seconds : m_simulated_seconds;
     const double current_hour = active_rendering_seconds / 3600.0;
 
+    // --- EVALUATING WEATHER STATE FOR RENDER PIPELINE ---
     ActiveWeatherState weather = m_weather_provider.evaluateWeather(m_day_of_year, current_hour);
 
     RenderContext ctx{
@@ -216,54 +218,74 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
         weather
     };
 
-    // 1. Render Base Layers & Effects
+    // 1. Render Base Background Atmosphere Layers
     m_solar_layer.render(buffer, width, height, ctx);
     m_lunar_layer.render(buffer, width, height, ctx);
     m_meteor_layer.render(buffer, width, height, weather.cloud_density); 
-    
-    // 2. Render Sunrise Effect (Dynamically bounded around calculated sunrise)
-    if (current_hour >= (weather.sunrise_hour - 1.5) && current_hour <= (weather.sunrise_hour + 2.5)) {
-        const double duration = 4.0;
-        const double start_time = weather.sunrise_hour - 1.5;
-        const float raw_progress = static_cast<float>((current_hour - start_time) / duration);
-        const float sunrise_phase = smoothstep(0.0f, 1.0f, raw_progress);
-        const float weight = smoothstep(0.0f, 1.0f, std::sin(raw_progress * Config::PI));
 
-        m_sunrise_effect.renderWithPhase(
-            m_effect_temp_buffer.data(), width, height, sunrise_phase, Config::EAST_DIRECTION_DEGREES, weather.cloud_density
-        );
+    // 2. MATHEMATICAL SOLAR POSITION ENGINE
+    const double DEG_TO_RAD = 3.14159265358979323846 / 180.0;
+    const double RAD_TO_DEG = 180.0 / 3.14159265358979323846;
+    const double latitude = 30.73;  
+    const double longitude = 79.07; 
 
-        for (size_t i = 0; i < total_bytes; ++i) {
-            buffer[i] = static_cast<uint8_t>(smoothBlend(
-                static_cast<float>(buffer[i]),
-                static_cast<float>(m_effect_temp_buffer[i]),
-                weight
-            ));
+    double gamma = 2.0 * 3.14159265358979323846 * (static_cast<double>(m_day_of_year) - 1.0) / 365.0;
+    double eot = 229.18 * (0.000075 + 0.001868 * std::cos(gamma) - 0.032077 * std::sin(gamma) 
+                 - 0.014615 * std::cos(2.0 * gamma) - 0.040849 * std::sin(2.0 * gamma));
+    double declination = 0.006918 - 0.399912 * std::cos(gamma) + 0.070257 * std::sin(gamma)
+                       - 0.006758 * std::cos(2.0 * gamma) + 0.000907 * std::sin(2.0 * gamma)
+                       - 0.002697 * std::cos(3.0 * gamma) + 0.001480 * std::sin(3.0 * gamma);
+
+    double solar_noon = (weather.sunrise_hour + weather.sunset_hour) / 2.0;
+    double hour_angle_deg = (current_hour - solar_noon) * 15.0;
+
+    double sin_alt = std::sin(latitude * DEG_TO_RAD) * std::sin(declination) + 
+                     std::cos(latitude * DEG_TO_RAD) * std::cos(declination) * std::cos(hour_angle_deg * DEG_TO_RAD);
+    float solar_altitude = static_cast<float>(std::asin(std::clamp(sin_alt, -1.0, 1.0)) * RAD_TO_DEG);
+
+    // 3. SEAMLESS TWILIGHT AND GOLDEN HOUR LAYER RENDERERS
+    const float EFF_START_ALT = -6.0f;   
+    const float EFF_END_ALT   =  6.0f;   
+    const float Horizon_ALT   = -0.833f; 
+
+    if (solar_altitude >= EFF_START_ALT && solar_altitude <= EFF_END_ALT) {
+        float progress = (solar_altitude - EFF_START_ALT) / (EFF_END_ALT - EFF_START_ALT);
+        
+        float weight = 0.0f;
+        if (solar_altitude < Horizon_ALT) {
+            weight = smoothstep(EFF_START_ALT, Horizon_ALT, solar_altitude);
+        } else {
+            weight = 1.0f - smoothstep(Horizon_ALT, EFF_END_ALT, solar_altitude);
+        }
+
+        if (current_hour < solar_noon) {
+            m_sunrise_effect.renderWithPhase(
+                m_effect_temp_buffer.data(), width, height, progress, Config::EAST_DIRECTION_DEGREES, weather.cloud_density
+            );
+
+            for (size_t i = 0; i < total_bytes; ++i) {
+                buffer[i] = static_cast<uint8_t>(smoothBlend(
+                    static_cast<float>(buffer[i]), static_cast<float>(m_effect_temp_buffer[i]), weight
+                ));
+            }
+        }
+        else {
+            float sunset_progress = 1.0f - progress; 
+            const float west_direction = std::fmod(Config::EAST_DIRECTION_DEGREES + 180.0f, 360.0f);
+
+            m_sunset_effect.renderWithPhase(
+                m_effect_temp_buffer.data(), width, height, sunset_progress, west_direction, weather.cloud_density
+            );
+
+            for (size_t i = 0; i < total_bytes; ++i) {
+                buffer[i] = static_cast<uint8_t>(smoothBlend(
+                    static_cast<float>(buffer[i]), static_cast<float>(m_effect_temp_buffer[i]), weight
+                ));
+            }
         }
     }
-    // 3. Render Sunset Effect (Dynamically bounded around calculated sunset)
-    else if (current_hour >= (weather.sunset_hour - 1.5) && current_hour <= (weather.sunset_hour + 2.0)) {
-        const double duration = 3.5;
-        const double start_time = weather.sunset_hour - 1.5;
-        const float raw_progress = static_cast<float>((current_hour - start_time) / duration);
-        const float sunset_phase = 1.0f - smoothstep(0.0f, 1.0f, raw_progress);
-        const float weight = smoothstep(0.0f, 1.0f, std::sin(raw_progress * Config::PI));
-        const float west_direction = std::fmod(Config::EAST_DIRECTION_DEGREES + 180.0f, 360.0f);
 
-        m_sunset_effect.renderWithPhase(
-            m_effect_temp_buffer.data(), width, height, sunset_phase, west_direction, weather.cloud_density
-        );
-
-        for (size_t i = 0; i < total_bytes; ++i) {
-            buffer[i] = static_cast<uint8_t>(smoothBlend(
-                static_cast<float>(buffer[i]),
-                static_cast<float>(m_effect_temp_buffer[i]),
-                weight
-            ));
-        }
-    }
-
-    // 4. STRICT THUNDER GUARDRAIL (Zero-Allocation Protection Mask)
+    // 4. Strict Thunder Mask Execution Guardrail
     if (weather.is_thunder_possible && weather.cloud_density >= 0.70f) {
         m_thunder_effect.render(m_effect_temp_buffer.data(), width, height);
         const float flash_intensity = 0.60f * (1.0f - (weather.cloud_density * 0.30f));
@@ -272,7 +294,6 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
         size_t total_pixels = width * height;
         for (size_t i = 0; i < total_pixels; ++i) {
             size_t idx = i * 3;
-            
             uint8_t r = buffer[idx];
             uint8_t g = buffer[idx + 1];
             uint8_t b = buffer[idx + 2];
@@ -281,10 +302,7 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
             if (current_intensity <= FREE_LED_THRESHOLD) {
                 uint8_t thun_val = m_effect_temp_buffer[idx]; 
                 if (thun_val > 20) {
-                    uint8_t flash_val = static_cast<uint8_t>(std::min(
-                        255.0f,
-                        static_cast<float>(thun_val) * flash_intensity
-                    ));
+                    uint8_t flash_val = static_cast<uint8_t>(std::min(255.0f, static_cast<float>(thun_val) * flash_intensity));
                     buffer[idx]     = flash_val;
                     buffer[idx + 1] = flash_val;
                     buffer[idx + 2] = flash_val;

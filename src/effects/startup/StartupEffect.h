@@ -18,9 +18,7 @@ public:
 
 private:
     uint32_t m_elapsed_ms;
-    uint32_t m_duration_ms;
+    uint32_t m_duration_ms; // Total 8000ms (8 seconds)
     bool m_is_complete;
-    float m_pulse_phase;
-
-    void renderLogoPlaceholder(uint8_t* buffer, size_t width, size_t height, float brightness);
+    float m_sparkle_seed;
 };

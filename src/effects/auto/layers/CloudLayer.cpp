@@ -61,15 +61,35 @@ void CloudLayer::render(uint8_t* buffer, size_t width, size_t height, CloudDensi
             float blob_2 = std::sin(nx * 0.5f + ny * 0.7f);
             float cloud_noise = (blob_1 * 0.65f + blob_2 * 0.35f + 1.0f) * 0.5f; // Normalized to [0, 1]
 
-            // If the noise value exceeds the tier threshold, dim the LEDs to cast a cloud shadow chunk
+            // If the noise value exceeds the tier threshold, cast a neutral gray cloud shadow
             if (cloud_noise >= coverage_threshold) {
-                // Calculate softness gradient near the edges of the cloud chunk
                 float edge_distance = (cloud_noise - coverage_threshold) / (1.0f - coverage_threshold);
                 float factor = std::clamp(static_cast<float>(shadow_alpha) / 255.0f + (1.0f - edge_distance) * 0.2f, 0.05f, 1.0f);
 
-                buffer[index + 0] = static_cast<uint8_t>(buffer[index + 0] * factor);
-                buffer[index + 1] = static_cast<uint8_t>(buffer[index + 1] * factor);
-                buffer[index + 2] = static_cast<uint8_t>(buffer[index + 2] * factor);
+                uint8_t r = buffer[index + 0];
+                uint8_t g = buffer[index + 1];
+                uint8_t b = buffer[index + 2];
+
+                if (is_daytime) {
+                    // Pull colors slightly toward a neutral gray/slate luminance during daytime overcast
+                    // to completely neutralize any unwanted blue, violet, or purple hue distortions.
+                    float luminance = 0.299f * r + 0.587f * g + 0.114f * b;
+                    float desaturate_blend = 0.35f; // Blend factor toward neutral gray luminance
+
+                    float target_r = r * (1.0f - desaturate_blend) + luminance * desaturate_blend;
+                    float target_g = g * (1.0f - desaturate_blend) + luminance * desaturate_blend;
+                    float target_b = b * (1.0f - desaturate_blend) + luminance * desaturate_blend;
+
+                    buffer[index + 0] = static_cast<uint8_t>(target_r * factor);
+                    buffer[index + 1] = static_cast<uint8_t>(target_g * factor);
+                    buffer[index + 2] = static_cast<uint8_t>(target_b * factor);
+                } else {
+                    // Standard pure dimming for nighttime clouds
+                    buffer[index + 0] = static_cast<uint8_t>(r * factor);
+                    buffer[index + 1] = static_cast<uint8_t>(g * factor);
+                    buffer[index + 2] = static_cast<uint8_t>(b * factor);
+                    
+                }
             }
         }
     }

@@ -80,6 +80,7 @@ add_executable(TinQa_RudraaX_V1
     src/drivers/Pcf8563Driver.cpp
     src/effects/auto/layers/CloudLayer.h
     src/effects/auto/layers/CloudLayer.cpp
+    src/utils/DisplayCompositor.h
 )
 
 # Compile PIO Assembly File into C++ Header

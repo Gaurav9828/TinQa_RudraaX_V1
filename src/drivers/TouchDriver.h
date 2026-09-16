@@ -30,6 +30,13 @@ private:
     bool m_pad2SingleClickReady = false;
     bool m_pad2LongPressReady = false;
 
+    // Tracking for Pad 5 (GP15) - POWER / DIAGNOSTIC MODE
+    uint32_t pad5PressStartTime = 0;
+    bool pad5WasPressed = false;
+    bool pad5LongPressTriggered = false;
+    bool m_pad5SingleClickReady = false;
+    bool m_pad5LongPressReady = false;
+
     // Global 1-second touch debounce lock
     uint32_t lastGlobalTouchTime = 0;
 
@@ -66,7 +73,7 @@ public:
             }
         }
 
-    // --- Pad 1 (GP9) Press Duration Handler (AUTO / HYPERLAPSE) ---
+        // --- Pad 1 (GP9) Press Duration Handler (AUTO / HYPERLAPSE) ---
         bool pad1Current = gpio_get(pins[0]);
         if (pad1Current && !pad1WasPressed) {
             pad1PressStartTime = now;
@@ -87,7 +94,6 @@ public:
             uint32_t duration = now - pad1PressStartTime;
             pad1WasPressed = false;
 
-            // Only fire short click if long press was NOT triggered during this press session
             if (!pad1LongPressTriggered && duration > Config::Touch::DEBOUNCE_MS && duration < LONG_PRESS_DURATION_MS) {
                 if (now - lastGlobalTouchTime >= GLOBAL_DEBOUNCE_MS) {
                     m_pad1SingleClickReady = true;
@@ -123,6 +129,36 @@ public:
                     m_pad2SingleClickReady = true;
                     lastGlobalTouchTime = now;
                     printf("[TOUCH TRIGGER] Pad 2 Short-Tap Confirmed! (SUNRISE)\n");
+                }
+            }
+        }
+
+        // --- Pad 5 (GP15) Press Duration Handler (POWER / DIAGNOSTIC MODE) ---
+        bool pad5Current = gpio_get(pins[4]);
+        if (pad5Current && !pad5WasPressed) {
+            pad5PressStartTime = now;
+            pad5WasPressed = true;
+            pad5LongPressTriggered = false;
+        } 
+        else if (pad5Current && pad5WasPressed) {
+            if (!pad5LongPressTriggered && (now - pad5PressStartTime >= LONG_PRESS_DURATION_MS)) {
+                if (now - lastGlobalTouchTime >= GLOBAL_DEBOUNCE_MS) {
+                    pad5LongPressTriggered = true;
+                    m_pad5LongPressReady = true;
+                    lastGlobalTouchTime = now;
+                    printf("[TOUCH TRIGGER] Pad 5 Long-Press Detected (2s)! (DIAGNOSTIC MODE)\n");
+                }
+            }
+        } 
+        else if (!pad5Current && pad5WasPressed) {
+            uint32_t duration = now - pad5PressStartTime;
+            pad5WasPressed = false;
+
+            if (!pad5LongPressTriggered && duration > Config::Touch::DEBOUNCE_MS && duration < LONG_PRESS_DURATION_MS) {
+                if (now - lastGlobalTouchTime >= GLOBAL_DEBOUNCE_MS) {
+                    m_pad5SingleClickReady = true;
+                    lastGlobalTouchTime = now;
+                    printf("[TOUCH TRIGGER] Pad 5 Short-Tap Confirmed! (POWER)\n");
                 }
             }
         }
@@ -162,7 +198,24 @@ public:
         return false;
     }
 
-    // Generic Pad Trigger with 1-second global debounce guard
+    // Pad 5 API
+    bool wasPad5SingleClicked() {
+        if (m_pad5SingleClickReady) {
+            m_pad5SingleClickReady = false;
+            return true;
+        }
+        return false;
+    }
+
+    bool wasPad5LongPressed() {
+        if (m_pad5LongPressReady) {
+            m_pad5LongPressReady = false;
+            return true;
+        }
+        return false;
+    }
+
+    // Generic Pad Trigger helper for single-action pads (Pads 3 & 4)
     bool isPadPressed(int padIndex) {
         int idx = padIndex - 1;
         if (idx < 0 || idx >= 5) return false;
@@ -181,5 +234,7 @@ public:
 
     bool wasPad3Pressed() { return isPadPressed(3); }
     bool wasPad4Pressed() { return isPadPressed(4); }
-    bool wasPad5Pressed() { return isPadPressed(5); }
+    
+    // Backward compatibility wrapper for Pad 5 short clicks (Power Toggle)
+    bool wasPad5Pressed() { return wasPad5SingleClicked(); }
 };

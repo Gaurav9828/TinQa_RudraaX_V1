@@ -72,7 +72,6 @@ add_executable(TinQa_RudraaX_V1
     src/effects/sunset/SunsetEffect.cpp
     src/effects/aurora/AuroraEffect.cpp
     src/effects/thunder/ThunderEffect.cpp
-    src/effects/test_pattern/TestPatternEffect.cpp
     src/utils/WatchdogManager.h
     src/system/StateController.h
     src/utils/TimePersistence.h
@@ -81,6 +80,8 @@ add_executable(TinQa_RudraaX_V1
     src/effects/auto/layers/CloudLayer.h
     src/effects/auto/layers/CloudLayer.cpp
     src/utils/DisplayCompositor.h
+    src/system/HealthCheckManager.h
+    src/system/HealthCheckManager.cpp
 )
 
 # Compile PIO Assembly File into C++ Header

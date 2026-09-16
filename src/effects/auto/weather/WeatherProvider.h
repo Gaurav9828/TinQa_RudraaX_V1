@@ -24,5 +24,6 @@ public:
 
 private:
     float getPseudoRandom(uint16_t day, uint8_t seed_offset) const;
+    bool isSummerMonth(uint16_t day_of_year) const;
     void calculateSunriseSunsetWithColors(uint16_t day_of_year, double& out_sunrise, double& out_sunset, double& out_redness_duration_hours) const;
 };

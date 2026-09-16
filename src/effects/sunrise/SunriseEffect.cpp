@@ -41,50 +41,45 @@ SunriseEffect::ColorRGB SunriseEffect::getAlpenglowColor(float phase) const {
     const ColorRGB COLOR_DEEP_RED      = {220.0f,  15.0f,   0.0f}; 
     const ColorRGB COLOR_GOLDEN_RED    = {255.0f,  65.0f,   0.0f}; 
     const ColorRGB COLOR_GOLDEN_YELLOW = {255.0f, 150.0f,  10.0f}; 
-    const ColorRGB COLOR_SOFT_GOLD     = {255.0f, 200.0f,  80.0f}; 
-    const ColorRGB COLOR_OFF_WHITE     = {245.0f, 235.0f, 125.0f}; 
+    const ColorRGB COLOR_SOLAR_START   = {255.0f, 140.0f,  40.0f}; 
 
     if (phase <= 0.01f) {
         return COLOR_OFF;
     } 
-    else if (phase < 0.20f) {
-        float t = phase / 0.20f;
+    else if (phase < 0.25f) {
+        float t = phase / 0.25f;
+        t = t * t * (3.0f - 2.0f * t);
         return {
             COLOR_DEEP_RED.r * t,
             COLOR_DEEP_RED.g * t,
             COLOR_DEEP_RED.b * t
         };
     } 
-    else if (phase < 0.40f) {
-        float t = (phase - 0.20f) / 0.20f;
+    else if (phase < 0.50f) {
+        float t = (phase - 0.25f) / 0.25f;
+        t = t * t * (3.0f - 2.0f * t);
         return {
             COLOR_DEEP_RED.r + (COLOR_GOLDEN_RED.r - COLOR_DEEP_RED.r) * t,
             COLOR_DEEP_RED.g + (COLOR_GOLDEN_RED.g - COLOR_DEEP_RED.g) * t,
             COLOR_DEEP_RED.b + (COLOR_GOLDEN_RED.b - COLOR_DEEP_RED.b) * t
         };
     } 
-    else if (phase < 0.65f) {
-        float t = (phase - 0.40f) / 0.25f;
+    else if (phase < 0.80f) {
+        float t = (phase - 0.50f) / 0.30f;
+        t = t * t * (3.0f - 2.0f * t);
         return {
             COLOR_GOLDEN_RED.r + (COLOR_GOLDEN_YELLOW.r - COLOR_GOLDEN_RED.r) * t,
             COLOR_GOLDEN_RED.g + (COLOR_GOLDEN_YELLOW.g - COLOR_GOLDEN_RED.g) * t,
             COLOR_GOLDEN_RED.b + (COLOR_GOLDEN_YELLOW.b - COLOR_GOLDEN_RED.b) * t
         };
     }
-    else if (phase < 0.85f) {
-        float t = (phase - 0.65f) / 0.20f;
-        return {
-            COLOR_GOLDEN_YELLOW.r + (COLOR_SOFT_GOLD.r - COLOR_GOLDEN_YELLOW.r) * t,
-            COLOR_GOLDEN_YELLOW.g + (COLOR_SOFT_GOLD.g - COLOR_GOLDEN_YELLOW.g) * t,
-            COLOR_GOLDEN_YELLOW.b + (COLOR_SOFT_GOLD.b - COLOR_GOLDEN_YELLOW.b) * t
-        };
-    }
     else {
-        float t = (phase - 0.85f) / 0.15f;
+        float t = (phase - 0.80f) / 0.20f;
+        t = t * t * (3.0f - 2.0f * t);
         return {
-            COLOR_SOFT_GOLD.r + (COLOR_OFF_WHITE.r - COLOR_SOFT_GOLD.r) * t,
-            COLOR_SOFT_GOLD.g + (COLOR_OFF_WHITE.g - COLOR_SOFT_GOLD.g) * t,
-            COLOR_SOFT_GOLD.b + (COLOR_OFF_WHITE.b - COLOR_SOFT_GOLD.b) * t
+            COLOR_GOLDEN_YELLOW.r + (COLOR_SOLAR_START.r - COLOR_GOLDEN_YELLOW.r) * t,
+            COLOR_GOLDEN_YELLOW.g + (COLOR_SOLAR_START.g - COLOR_GOLDEN_YELLOW.g) * t,
+            COLOR_GOLDEN_YELLOW.b + (COLOR_SOLAR_START.b - COLOR_GOLDEN_YELLOW.b) * t
         };
     }
 }
@@ -120,11 +115,10 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
     updateDirectionVector(direction_degrees);
 
     float max_possible_dist = std::hypot(static_cast<float>(width), static_cast<float>(height));
-    float current_wave_radius = m_smoothed_progress * max_possible_dist * 1.4f;
+    float current_wave_radius = m_smoothed_progress * max_possible_dist * 2.0f;
 
-    // Dim brightness slightly if cloud density is high
-    float cloud_dimming = 1.0f - (clampf(cloud_density, 0.0f, 1.0f) * 0.35f);
-    float global_brightness_scale = (0.25f + (m_smoothed_progress * 0.75f)) * cloud_dimming;
+    float cloud_dimming = 1.0f - (clampf(cloud_density, 0.0f, 1.0f) * 0.30f);
+    float global_brightness_scale = (0.20f + (m_smoothed_progress * 0.80f)) * cloud_dimming;
 
     for (size_t y = 0; y < height; ++y) {
         for (size_t x = 0; x < width; ++x) {
@@ -151,9 +145,13 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
             }
 
             float pixel_phase = 0.0f;
-            if (current_wave_radius > 0.001f) {
+            // Force all LEDs fully turned on when sunrise completion is reached
+            if (m_smoothed_progress >= 0.999f) {
+                pixel_phase = 1.0f;
+            } else if (current_wave_radius > 0.001f) {
                 float wave_delta = current_wave_radius - min_effective_dist;
-                pixel_phase = clampf(wave_delta / (max_possible_dist * 0.45f), 0.0f, 1.0f);
+                pixel_phase = clampf(wave_delta / (max_possible_dist * 0.5f), 0.0f, 1.0f);
+                pixel_phase = pixel_phase * pixel_phase * (3.0f - 2.0f * pixel_phase);
             }
 
             ColorRGB rgb = getAlpenglowColor(pixel_phase);

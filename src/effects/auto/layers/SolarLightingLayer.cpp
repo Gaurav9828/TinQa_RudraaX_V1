@@ -6,46 +6,88 @@
 namespace {
     inline float smoothstep(float edge0, float edge1, float x) {
         float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-        return t * t * (3.0f - 2.0f * t); // Smooth hermite curve to prevent linear pops
+        return t * t * (3.0f - 2.0f * t);
     }
+}
+
+SolarLightingLayer::SolarLightingLayer() {
+    init();
+}
+
+void SolarLightingLayer::init() {
+    parseConfig();
+}
+
+void SolarLightingLayer::parseConfig() {
+    m_peak_coordinates.clear();
+    for (size_t idx : Config::SUNRISE_PEAK_INDICES) {
+        size_t x = idx % Config::MATRIX_WIDTH;
+        size_t y = idx / Config::MATRIX_WIDTH;
+        m_peak_coordinates.push_back({x, y});
+    }
+    float radians = Config::EAST_DIRECTION_DEGREES * (Config::PI / 180.0f);
+    m_sun_direction_x = std::cos(radians);
+    m_sun_direction_y = -std::sin(radians);
+}
+
+float SolarLightingLayer::clampf(float val, float min_val, float max_val) const {
+    return std::max(min_val, std::min(max_val, val));
 }
 
 void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, const RenderContext& ctx) {
     if (!buffer || width == 0 || height == 0) return;
 
-    float daylight = 0.0f;
-
-    // Use dynamic sunrise and sunset times from WeatherProvider
     double sunrise = ctx.weather.sunrise_hour;
     double sunset = ctx.weather.sunset_hour;
     double twilight_dur = ctx.weather.redness_duration_hours;
 
-    // --- GRADUAL DAWN / DUSK RAMP ---
-    // Stretched morning ramp so it builds up gradually across 3 hours post-sunrise instead of popping instantly
-    double morning_ramp_end = sunrise + 3.0; 
-    double evening_ramp_start = sunset - 3.0;
+    double dawn_start = sunrise - twilight_dur;
+    double dawn_end = sunrise + 3.0; 
+    double dusk_start = sunset - 3.0;
+    double dusk_end = sunset + twilight_dur;
 
-    if (ctx.current_hour >= (sunrise - twilight_dur) && ctx.current_hour < morning_ramp_end) {
-        daylight = smoothstep(static_cast<float>(sunrise - twilight_dur), static_cast<float>(morning_ramp_end), static_cast<float>(ctx.current_hour));
-    } else if (ctx.current_hour >= morning_ramp_end && ctx.current_hour <= evening_ramp_start) {
-        daylight = 1.0f;
-    } else if (ctx.current_hour > evening_ramp_start && ctx.current_hour <= (sunset + twilight_dur)) {
-        daylight = 1.0f - smoothstep(static_cast<float>(evening_ramp_start), static_cast<float>(sunset + twilight_dur), static_cast<float>(ctx.current_hour));
+    float global_daylight = 0.0f;
+    float spatial_expand_progress = 1.0f;
+    bool is_dusk = false;
+
+    if (ctx.current_hour >= dawn_start && ctx.current_hour < dawn_end) {
+        float progress = static_cast<float>((ctx.current_hour - dawn_start) / (dawn_end - dawn_start));
+        global_daylight = smoothstep(0.0f, 1.0f, progress);
+        spatial_expand_progress = smoothstep(0.0f, 1.0f, progress);
+    } 
+    else if (ctx.current_hour >= dawn_end && ctx.current_hour <= dusk_start) {
+        global_daylight = 1.0f;
+        spatial_expand_progress = 1.0f;
+    } 
+    else if (ctx.current_hour > dusk_start && ctx.current_hour <= dusk_end) {
+        float progress = static_cast<float>((ctx.current_hour - dusk_start) / (dusk_end - dusk_start));
+        global_daylight = 1.0f - smoothstep(0.0f, 1.0f, progress);
+        spatial_expand_progress = 1.0f - smoothstep(0.0f, 1.0f, progress);
+        is_dusk = true; // Mark as ending phase to mirror direction
+    } else {
+        return; 
     }
 
-    // Base background colors matching sunrise/sunset endpoints
-    float day_r = 245.0f;
-    float day_g = 235.0f;
-    float day_b = 125.0f;
+    // Adjust direction vector: mirror it during dusk to copy sunset direction flow
+    float active_dir_deg = Config::EAST_DIRECTION_DEGREES;
+    if (is_dusk) {
+        active_dir_deg -= 180.0f; // Mirror direction for sunset ending
+    }
+    float rads = active_dir_deg * (Config::PI / 180.0f);
+    float dir_x = std::cos(rads);
+    float dir_y = -std::sin(rads);
 
-    // Dynamic daytime color progression mapped dynamically between sunrise and sunset
+    float day_r = 255.0f;
+    float day_g = 140.0f;
+    float day_b = 40.0f;
+
     if (ctx.current_hour >= sunrise && ctx.current_hour <= sunset) {
         float day_progress = static_cast<float>((ctx.current_hour - sunrise) / (sunset - sunrise));
         day_progress = std::clamp(day_progress, 0.0f, 1.0f);
 
-        float r1 = 245.0f, g1 = 235.0f, b1 = 125.0f;
-        float r2 = 255.0f, g2 = 215.0f, b2 =  45.0f;
-        float r3 = 245.0f, g3 = 235.0f, b3 = 125.0f;
+        float r1 = 255.0f, g1 = 140.0f, b1 =  40.0f;
+        float r2 = 255.0f, g2 = 195.0f, b2 =  90.0f; 
+        float r3 = 255.0f, g3 = 140.0f, b3 =  40.0f;
 
         if (day_progress <= 0.5f) {
             float t = day_progress / 0.5f;
@@ -62,73 +104,79 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
         }
     }
 
-    // --- SMOOTH FADE-IN / FADE-OUT STORM TRANSITION ---
     float cloud_day_factor = 1.0f - (ctx.weather.cloud_density * 0.30f);
-    float storm_transition_weight = 0.0f;
+    const uint8_t base_r = static_cast<uint8_t>(clampf(day_r * cloud_day_factor * global_daylight, 0.0f, 255.0f));
+    const uint8_t base_g = static_cast<uint8_t>(clampf(day_g * cloud_day_factor * global_daylight, 0.0f, 255.0f));
+    const uint8_t base_b = static_cast<uint8_t>(clampf(day_b * cloud_day_factor * global_daylight, 0.0f, 255.0f));
 
-    // Scale storm window dynamically relative to daylight bounds
-    float storm_start = static_cast<float>(sunrise + 3.0);
-    float storm_end = static_cast<float>(sunset - 1.0);
-    if (ctx.weather.cloud_density >= 0.95f && ctx.current_hour >= storm_start && ctx.current_hour <= sunset) {
-        if (ctx.current_hour < (sunrise + 5.0)) {
-            storm_transition_weight = smoothstep(static_cast<float>(storm_start), static_cast<float>(sunrise + 5.0), static_cast<float>(ctx.current_hour));
-        } else if (ctx.current_hour <= storm_end) {
-            storm_transition_weight = 1.0f;
-        } else {
-            storm_transition_weight = 1.0f - smoothstep(static_cast<float>(storm_end), static_cast<float>(sunset), static_cast<float>(ctx.current_hour));
+    // --- GRADUAL SPATIAL WAVE MASK (Fixed Starting Jump) ---
+    float max_possible_dist = std::hypot(static_cast<float>(width), static_cast<float>(height));
+    // Smoother scaling curve for gradual LED illumination
+    float current_wave_radius = spatial_expand_progress * max_possible_dist * 2.2f;
+
+    int matrix_width = static_cast<int>(width);
+    int matrix_height = static_cast<int>(height);
+
+    for (size_t y = 0; y < height; ++y) {
+        for (size_t x = 0; x < width; ++x) {
+            float fx = static_cast<float>(x);
+            float fy = static_cast<float>(y);
+
+            float min_effective_dist = 99999.0f;
+            for (const auto& peak : m_peak_coordinates) {
+                float px = static_cast<float>(peak.first);
+                float py = static_cast<float>(peak.second);
+
+                float dx = fx - px;
+                float dy = fy - py;
+                float euclidean_dist = std::hypot(dx, dy);
+
+                float directional_dot = (dx * dir_x + dy * dir_y);
+                float directional_penalty = (directional_dot < 0.0f) ? 0.2f * std::abs(directional_dot) : 1.2f * directional_dot;
+
+                float effective_dist = euclidean_dist + directional_penalty;
+                if (effective_dist < min_effective_dist) {
+                    min_effective_dist = effective_dist;
+                }
+            }
+
+            float spatial_mask = 1.0f;
+            if (spatial_expand_progress < 1.0f) {
+                float wave_delta = current_wave_radius - min_effective_dist;
+                // Wider divisor band ensures gradual, slow individual LED turn-on transitions
+                spatial_mask = clampf(wave_delta / (max_possible_dist * 0.75f), 0.0f, 1.0f);
+                spatial_mask = spatial_mask * spatial_mask * (3.0f - 2.0f * spatial_mask);
+            }
+
+            if (spatial_mask > 0.0f) {
+                size_t pixel_idx = (y * width + x) * 3;
+                uint8_t final_r = static_cast<uint8_t>(base_r * spatial_mask);
+                uint8_t final_g = static_cast<uint8_t>(base_g * spatial_mask);
+                uint8_t final_b = static_cast<uint8_t>(base_b * spatial_mask);
+
+                buffer[pixel_idx + 0] = std::min<uint16_t>(255, buffer[pixel_idx + 0] + final_r);
+                buffer[pixel_idx + 1] = std::min<uint16_t>(255, buffer[pixel_idx + 1] + final_g);
+                buffer[pixel_idx + 2] = std::min<uint16_t>(255, buffer[pixel_idx + 2] + final_b);
+            }
         }
     }
 
-    if (storm_transition_weight > 0.0f) {
-        float target_cloud_factor = 0.08f;
-        cloud_day_factor = cloud_day_factor * (1.0f - storm_transition_weight) + target_cloud_factor * storm_transition_weight;
-
-        float storm_r = 120.0f;
-        float storm_g = 140.0f;
-        float storm_b = 175.0f;
-
-        day_r = day_r * (1.0f - storm_transition_weight) + storm_r * storm_transition_weight;
-        day_g = day_g * (1.0f - storm_transition_weight) + storm_g * storm_transition_weight;
-        day_b = day_b * (1.0f - storm_transition_weight) + storm_b * storm_transition_weight;
-    }
-
-    const uint8_t r = static_cast<uint8_t>(std::clamp((day_r * cloud_day_factor) * daylight, 0.0f, 255.0f));
-    const uint8_t g = static_cast<uint8_t>(std::clamp((day_g * cloud_day_factor) * daylight, 0.0f, 255.0f));
-    const uint8_t b = static_cast<uint8_t>(std::clamp((day_b * cloud_day_factor) * daylight, 0.0f, 255.0f));
-
-    const size_t total_pixels = width * height;
-    for (size_t i = 0; i < total_pixels; ++i) {
-        buffer[i * 3 + 0] = r;
-        buffer[i * 3 + 1] = g;
-        buffer[i * 3 + 2] = b;
-    }
-
-    // --- Sun Cluster Entity Rendering (10 LEDs) ---
+    // --- Sun Entity Cluster ---
     if (ctx.current_hour >= sunrise && ctx.current_hour <= sunset) {
-        float sun_visibility = 0.0f;
-        
-        // Match sun fade duration to the expanded morning ramp window
+        float sun_visibility = 1.0f;
         double sun_fade_duration = 3.0; 
         if (ctx.current_hour >= sunrise && ctx.current_hour <= (sunrise + sun_fade_duration)) {
             sun_visibility = smoothstep(static_cast<float>(sunrise), static_cast<float>(sunrise + sun_fade_duration), static_cast<float>(ctx.current_hour));
         } else if (ctx.current_hour >= (sunset - sun_fade_duration) && ctx.current_hour <= sunset) {
             sun_visibility = 1.0f - smoothstep(static_cast<float>(sunset - sun_fade_duration), static_cast<float>(sunset), static_cast<float>(ctx.current_hour));
-        } else {
-            sun_visibility = 1.0f; 
         }
 
-        float sun_storm_dimming = 1.0f - (storm_transition_weight * 0.85f);
-        sun_visibility *= sun_storm_dimming * (1.0f - (ctx.weather.cloud_density * 0.40f));
+        sun_visibility *= (1.0f - (ctx.weather.cloud_density * 0.40f));
 
         if (sun_visibility > 0.0f) {
-            // Scale base sun intensity directly with current daylight factor so it dims nicely in early morning
-            float base_sun_intensity = 230.0f * daylight; 
-            
+            float base_sun_intensity = 230.0f * global_daylight; 
             float day_progress = static_cast<float>((ctx.current_hour - sunrise) / (sunset - sunrise));
             day_progress = std::clamp(day_progress, 0.0f, 1.0f);
-
-            int matrix_width = static_cast<int>(Config::MATRIX_WIDTH);
-            int matrix_height = static_cast<int>(Config::MATRIX_HEIGHT);
 
             int sun_x = static_cast<int>((1.0f - day_progress) * static_cast<float>(matrix_width - 1));
             sun_x = std::clamp(sun_x, 0, matrix_width - 1);
@@ -157,9 +205,9 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
                     const size_t pixel_idx = (py * matrix_width + px) * 3;
 
                     float brightness = base_sun_intensity * sun_visibility * p.weight;
-                    uint8_t sun_r = static_cast<uint8_t>(std::clamp(brightness, 0.0f, 255.0f));
-                    uint8_t sun_g = static_cast<uint8_t>(std::clamp(brightness * 0.75f, 0.0f, 255.0f)); 
-                    uint8_t sun_b = static_cast<uint8_t>(std::clamp(brightness * 0.02f, 0.0f, 255.0f)); 
+                    uint8_t sun_r = static_cast<uint8_t>(clampf(brightness, 0.0f, 255.0f));
+                    uint8_t sun_g = static_cast<uint8_t>(clampf(brightness * 0.78f, 0.0f, 255.0f)); 
+                    uint8_t sun_b = static_cast<uint8_t>(clampf(brightness * 0.08f, 0.0f, 255.0f)); 
 
                     buffer[pixel_idx + 0] = std::min<uint16_t>(255, buffer[pixel_idx + 0] + sun_r);
                     buffer[pixel_idx + 1] = std::min<uint16_t>(255, buffer[pixel_idx + 1] + sun_g);

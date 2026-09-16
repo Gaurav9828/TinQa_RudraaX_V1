@@ -16,6 +16,13 @@ float WeatherProvider::getPseudoRandom(uint16_t day, uint8_t seed_offset) const 
     return static_cast<float>(hash & 0xFFFF) / 65535.0f;
 }
 
+// Helper to determine if a day of the year falls into a summer month (April - October)
+bool WeatherProvider::isSummerMonth(uint16_t day_of_year) const {
+    // Approximate day ranges for Apr 1 to Oct 31 (Non-leap year baseline)
+    // Jan(31), Feb(28), Mar(31) -> Day 91 is April 1st. Oct 31 is roughly Day 304.
+    return (day_of_year >= 91 && day_of_year <= 304);
+}
+
 void WeatherProvider::calculateSunriseSunsetWithColors(uint16_t day_of_year, double& out_sunrise, double& out_sunset, double& out_redness_duration_hours) const {
     const double DEG_TO_RAD = 3.14159265358979323846 / 180.0;
     const double RAD_TO_DEG = 180.0 / 3.14159265358979323846;
@@ -48,17 +55,18 @@ void WeatherProvider::calculateSunriseSunsetWithColors(uint16_t day_of_year, dou
     cos_H_actual = std::clamp(cos_H_actual, -1.0, 1.0);
     double H_actual_hours = (std::acos(cos_H_actual) * RAD_TO_DEG) / 15.0;
 
-    double h0_twilight = -6.0 * DEG_TO_RAD;
-    double cos_H_twilight = (std::sin(h0_twilight) - sin_lat * sin_dec) / (cos_lat * cos_dec);
-    cos_H_twilight = std::clamp(cos_H_twilight, -1.0, 1.0);
-    double H_twilight_hours = (std::acos(cos_H_twilight) * RAD_TO_DEG) / 15.0;
-
     double longitude_offset_hours = (82.5 - longitude) * 4.0 / 60.0; 
     double solar_noon = 12.0 + longitude_offset_hours - (eot / 60.0);
 
     out_sunrise = solar_noon - H_actual_hours;
     out_sunset = solar_noon + H_actual_hours;
-    out_redness_duration_hours = H_twilight_hours - H_actual_hours;
+
+    // Fixed durations: Summer = 40 mins (0.6666h), Winter = 30 mins (0.5h)
+    if (isSummerMonth(day_of_year)) {
+        out_redness_duration_hours = 40.0 / 60.0;
+    } else {
+        out_redness_duration_hours = 30.0 / 60.0;
+    }
 }
 
 ActiveWeatherState WeatherProvider::evaluateWeather(uint16_t day_of_year, double current_hour_24) const {
@@ -66,7 +74,7 @@ ActiveWeatherState WeatherProvider::evaluateWeather(uint16_t day_of_year, double
     
     double sunrise_hour = 6.0;
     double sunset_hour = 18.0;
-    double redness_duration_hours = 0.4; 
+    double redness_duration_hours = 0.5; 
     
     calculateSunriseSunsetWithColors(day_of_year, sunrise_hour, sunset_hour, redness_duration_hours);
 
@@ -99,35 +107,19 @@ ActiveWeatherState WeatherProvider::evaluateWeather(uint16_t day_of_year, double
         day_weight = 0.0f;
     }
 
-    // --- CALCULATE BASE ATMOSPHERIC SUN BRIGHTNESS (FIXED) ---
-    const double DEG_TO_RAD = 3.14159265358979323846 / 180.0;
-    const double RAD_TO_DEG = 180.0 / 3.14159265358979323846;
-    const double latitude = 30.73;  
-
-    double gamma = 2.0 * 3.14159265358979323846 * (static_cast<double>(day_of_year) - 1.0) / 365.0;
-    double declination = 0.006918 - 0.399912 * std::cos(gamma) + 0.070257 * std::sin(gamma)
-                       - 0.006758 * std::cos(2.0 * gamma) + 0.000907 * std::sin(2.0 * gamma)
-                       - 0.002697 * std::cos(3.0 * gamma) + 0.001480 * std::sin(3.0 * gamma);
-
-    double solar_noon = (sunrise_hour + sunset_hour) / 2.0;
-    double hour_angle_deg = (current_hour_24 - solar_noon) * 15.0;
-
-    double sin_alt = std::sin(latitude * DEG_TO_RAD) * std::sin(declination) + 
-                     std::cos(latitude * DEG_TO_RAD) * std::cos(declination) * std::cos(hour_angle_deg * DEG_TO_RAD);
-    float solar_altitude = static_cast<float>(std::asin(std::clamp(sin_alt, -1.0, 1.0)) * RAD_TO_DEG);
-
+    // --- CALCULATE STATIC/SMOOTH SOLAR BRIGHTNESS TRANSITION ---
+    // Increases from morning to noon, decreases from noon to evening smoothly.
     float base_sun_brightness = 0.0f;
-
-    if (solar_altitude > -0.833f) {
-        float altitude_factor = std::sin(std::max(0.0f, solar_altitude) * static_cast<float>(DEG_TO_RAD));
-        base_sun_brightness = 0.05f + (altitude_factor * 0.45f); // Balanced daytime ceiling
-    } 
-    else if (solar_altitude >= -6.0f) {
-        float norm = (solar_altitude - (-6.0f)) / (-0.833f - (-6.0f));
-        base_sun_brightness = std::pow(norm, 2.0f) * 0.05f; // Smooth twilight handoff
-    } 
-    else {
-        base_sun_brightness = 0.0f; // Pure Night
+    double solar_noon = (sunrise_hour + sunset_hour) / 2.0;
+    
+    if (current_h_f >= sunrise_f && current_h_f <= sunset_f) {
+        // Normalized progress from 0 (sunrise) to 1 (sunset) passing through 0.5 (noon)
+        float day_progress = (current_h_f - sunrise_f) / (sunset_f - sunrise_f);
+        // Sine curve peaking at noon (1.0) and hitting 0 at sunrise/sunset edges, scaled to clean daylight ceiling
+        base_sun_brightness = std::sin(day_progress * 3.14159265f) * 0.5f; 
+        base_sun_brightness = std::clamp(base_sun_brightness, 0.05f, 0.5f);
+    } else {
+        base_sun_brightness = 0.0f; // Night
     }
 
     // Cloud density mappings

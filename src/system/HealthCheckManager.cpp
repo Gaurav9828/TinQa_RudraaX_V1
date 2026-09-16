@@ -45,10 +45,18 @@ void HealthCheckManager::update(uint32_t deltaMs, BH1750Driver& ambientSensor, T
         heartbeatPhase -= 2.0f * M_PI;
     }
 
-    TimePersistence::TimeInfo currentTime = TimePersistence::getCurrentTime(); 
+    // Retrieve day and simulated seconds from persistence storage
+    uint16_t currentDay = 1;
+    double simulatedSecs = 0.0;
+    TimePersistence::loadState(currentDay, simulatedSecs);
+    
+    // Utilize uint32_t for current time (seconds from midnight)
+    uint32_t currentTime = static_cast<uint32_t>(simulatedSecs);
+    uint32_t hour = currentTime / 3600;
+    uint32_t minute = (currentTime % 3600) / 60;
 
-    // --- 1. Monthly Auto-Diagnosis Scheduler (20th of the month at 02:00 AM) ---
-    if (currentTime.day == 20 && currentTime.hour == 2 && currentTime.minute == 0) {
+    // --- 1. Monthly Auto-Diagnosis Scheduler (20th of the year at 02:00 AM) ---
+    if (currentDay == 20 && hour == 2 && minute == 0) {
         if (lastCheckedDay != 20) {
             printf("[AUTO_DIAGNOSIS] Scheduled 20th monthly maintenance triggered at 02:00 AM.\n");
             performCacheWipe();
@@ -62,13 +70,13 @@ void HealthCheckManager::update(uint32_t deltaMs, BH1750Driver& ambientSensor, T
             }
             lastCheckedDay = 20; 
         }
-    } else if (currentTime.day != 20) {
+    } else if (currentDay != 20) {
         lastCheckedDay = 0; 
     }
 
     // --- 2. Hourly Reminder Trigger on the 21st (Only if automated run found a critical error) ---
-    if (currentTime.day == 21 && activeHourlyReminder) {
-        if (currentTime.minute == 0 && !isHourlyBlinkingActive) {
+    if (currentDay == 21 && activeHourlyReminder) {
+        if (minute == 0 && !isHourlyBlinkingActive) {
             isHourlyBlinkingActive = true;
             hourlyBlinkTimerMs = 0;
             printf("[REMINDER] 21st Hourly Alert Triggered: Full panel red heartbeat pulse starting for 1 minute.\n");
@@ -121,7 +129,6 @@ void HealthCheckManager::render(uint8_t* buffer, uint16_t width, uint16_t height
         }
     } 
     else {
-        // Render multiple errors with yellow line separators and red error rows
         renderMultiErrorDisplay(buffer, width, height);
     }
 }
@@ -199,7 +206,6 @@ void HealthCheckManager::runFullDiagnostics(BH1750Driver& ambientSensor, TouchDr
     healthReport.assignedErrorCode = 0;
     activeErrorCount = 0; 
 
-    // 1. Check Touch Pads (Pads 1-5 -> Error codes 1 to 5)
     for (int i = 0; i < 5; i++) {
         bool padHealthy = true; 
         healthReport.touchPadsHealthy[i] = padHealthy;
@@ -211,7 +217,6 @@ void HealthCheckManager::runFullDiagnostics(BH1750Driver& ambientSensor, TouchDr
         }
     }
 
-    // 2. Check Ambient Sensor (Error code 7)
     healthReport.ambientSensorHealthy = ambientSensor.isOperational();
     if (!healthReport.ambientSensorHealthy) {
         printf("[DIAG_ERROR] Ambient Light Sensor (BH1750) failure detected.\n");
@@ -219,10 +224,8 @@ void HealthCheckManager::runFullDiagnostics(BH1750Driver& ambientSensor, TouchDr
         healthReport.overallStatus = HealthStatus::WARNING;
     }
 
-    // 3. Check LED Matrix Panel (Error codes 8 for warning, 9 for critical)
     runLedPanelDeepScan(matrixDriver);
 
-    // 4. Check Internal Temperature / Thermal (Error code 6)
     healthReport.currentInternalTempC = readRp2040InternalTemperature();
     if (healthReport.currentInternalTempC > 65.0f) {
         healthReport.exhaustFanHealthy = false;
@@ -236,7 +239,6 @@ void HealthCheckManager::runFullDiagnostics(BH1750Driver& ambientSensor, TouchDr
         healthReport.systemMemoryHealthy = true;
     }
 
-    // --- Auto-Restart Logic if NO issues/warnings/errors are found ---
     if (healthReport.overallStatus == HealthStatus::OK && activeErrorCount == 0) {
         printf("[DIAGNOSTIC] All health checks passed successfully! Re-initiating device (Power-on restart sequence)...\n");
         begin(ambientSensor, touchDriver, matrixDriver);

@@ -41,14 +41,13 @@ SunsetEffect::ColorRGB SunsetEffect::getSunsetColor(float phase) const {
     const ColorRGB COLOR_DEEP_RED      = {220.0f,  15.0f,   0.0f}; 
     const ColorRGB COLOR_GOLDEN_RED    = {255.0f,  65.0f,   0.0f}; 
     const ColorRGB COLOR_GOLDEN_YELLOW = {255.0f, 150.0f,  10.0f}; 
-    const ColorRGB COLOR_SOFT_GOLD     = {255.0f, 200.0f,  80.0f}; 
-    const ColorRGB COLOR_OFF_WHITE     = {245.0f, 235.0f, 125.0f}; 
+    const ColorRGB COLOR_SOLAR_END     = {255.0f, 140.0f,  40.0f}; 
 
     if (phase <= 0.001f) {
         return COLOR_OFF;
     } 
-    else if (phase < 0.15f) {
-        float t = phase / 0.15f;
+    else if (phase < 0.20f) {
+        float t = phase / 0.20f;
         t = t * t * (3.0f - 2.0f * t);
         return {
             COLOR_DEEP_RED.r * t,
@@ -56,8 +55,8 @@ SunsetEffect::ColorRGB SunsetEffect::getSunsetColor(float phase) const {
             COLOR_DEEP_RED.b * t
         };
     }
-    else if (phase < 0.30f) {
-        float t = (phase - 0.15f) / 0.15f;
+    else if (phase < 0.45f) {
+        float t = (phase - 0.20f) / 0.25f;
         t = t * t * (3.0f - 2.0f * t);
         return {
             COLOR_DEEP_RED.r + (COLOR_GOLDEN_RED.r - COLOR_DEEP_RED.r) * t,
@@ -65,8 +64,8 @@ SunsetEffect::ColorRGB SunsetEffect::getSunsetColor(float phase) const {
             COLOR_DEEP_RED.b + (COLOR_GOLDEN_RED.b - COLOR_DEEP_RED.b) * t
         };
     }
-    else if (phase < 0.70f) {
-        float t = (phase - 0.30f) / 0.40f;
+    else if (phase < 0.75f) {
+        float t = (phase - 0.45f) / 0.30f;
         t = t * t * (3.0f - 2.0f * t);
         return {
             COLOR_GOLDEN_RED.r + (COLOR_GOLDEN_YELLOW.r - COLOR_GOLDEN_RED.r) * t,
@@ -75,12 +74,12 @@ SunsetEffect::ColorRGB SunsetEffect::getSunsetColor(float phase) const {
         };
     }
     else {
-        float t = (phase - 0.70f) / 0.30f;
+        float t = (phase - 0.75f) / 0.25f;
         t = t * t * (3.0f - 2.0f * t);
         return {
-            COLOR_GOLDEN_YELLOW.r + (COLOR_OFF_WHITE.r - COLOR_GOLDEN_YELLOW.r) * t,
-            COLOR_GOLDEN_YELLOW.g + (COLOR_OFF_WHITE.g - COLOR_GOLDEN_YELLOW.g) * t,
-            COLOR_GOLDEN_YELLOW.b + (COLOR_OFF_WHITE.b - COLOR_GOLDEN_YELLOW.b) * t
+            COLOR_GOLDEN_YELLOW.r + (COLOR_SOLAR_END.r - COLOR_GOLDEN_YELLOW.r) * t,
+            COLOR_GOLDEN_YELLOW.g + (COLOR_SOLAR_END.g - COLOR_GOLDEN_YELLOW.g) * t,
+            COLOR_GOLDEN_YELLOW.b + (COLOR_SOLAR_END.b - COLOR_GOLDEN_YELLOW.b) * t
         };
     }
 }
@@ -121,10 +120,10 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
     updateDirectionVector(direction_degrees);
 
     float max_possible_dist = std::hypot(static_cast<float>(width), static_cast<float>(height));
-    float current_wave_radius = m_smoothed_progress * max_possible_dist * 1.6f;
+    float current_wave_radius = m_smoothed_progress * max_possible_dist * 2.0f;
 
     float p = clampf(m_smoothed_progress, 0.0f, 1.0f);
-    float cloud_dimming = 1.0f - (clampf(cloud_density, 0.0f, 1.0f) * 0.35f);
+    float cloud_dimming = 1.0f - (clampf(cloud_density, 0.0f, 1.0f) * 0.30f);
     float global_brightness_scale = (p * p * (3.0f - 2.0f * p)) * cloud_dimming;
 
     for (size_t y = 0; y < height; ++y) {
@@ -152,9 +151,13 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
             }
 
             float pixel_phase = 0.0f;
-            if (current_wave_radius > 0.001f) {
+            // Force all LEDs fully turned on when sunset start begins
+            if (m_smoothed_progress >= 0.999f) {
+                pixel_phase = 1.0f;
+            } else if (current_wave_radius > 0.001f) {
                 float wave_delta = current_wave_radius - min_effective_dist;
-                pixel_phase = clampf(wave_delta / (max_possible_dist * 0.65f), 0.0f, 1.0f);
+                pixel_phase = clampf(wave_delta / (max_possible_dist * 0.5f), 0.0f, 1.0f);
+                pixel_phase = pixel_phase * pixel_phase * (3.0f - 2.0f * pixel_phase);
             }
 
             ColorRGB rgb = getSunsetColor(pixel_phase);

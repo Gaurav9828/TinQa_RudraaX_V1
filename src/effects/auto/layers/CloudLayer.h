@@ -26,6 +26,7 @@ public:
 
 private:
     float m_scroll_x;
+    float m_smoothed_cloud_intensity; // Time-smoothed intensity for gradual entry/exit
 };
 
 #endif // CLOUD_LAYER_H

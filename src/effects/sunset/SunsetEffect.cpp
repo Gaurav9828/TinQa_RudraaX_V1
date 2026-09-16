@@ -43,12 +43,11 @@ SunsetEffect::ColorRGB SunsetEffect::getSunsetColor(float phase) const {
     const ColorRGB COLOR_GOLDEN_YELLOW = {255.0f, 150.0f,  10.0f}; 
     const ColorRGB COLOR_SOLAR_END     = {255.0f, 140.0f,  40.0f}; 
 
-    if (phase <= 0.001f) {
+    if (phase <= 0.0001f) {
         return COLOR_OFF;
     } 
-    else if (phase < 0.20f) {
-        float t = phase / 0.20f;
-        t = t * t * (3.0f - 2.0f * t);
+    else if (phase < 0.25f) {
+        float t = phase / 0.25f;
         return {
             COLOR_DEEP_RED.r * t,
             COLOR_DEEP_RED.g * t,
@@ -56,7 +55,7 @@ SunsetEffect::ColorRGB SunsetEffect::getSunsetColor(float phase) const {
         };
     }
     else if (phase < 0.45f) {
-        float t = (phase - 0.20f) / 0.25f;
+        float t = (phase - 0.25f) / 0.20f;
         t = t * t * (3.0f - 2.0f * t);
         return {
             COLOR_DEEP_RED.r + (COLOR_GOLDEN_RED.r - COLOR_DEEP_RED.r) * t,
@@ -106,11 +105,11 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
     if (is_first_frame) {
         m_smoothed_progress = phase;
     } else {
-        float smoothing_factor = 0.20f; 
+        float smoothing_factor = (phase < 0.15f) ? 0.08f : 0.20f;
         m_smoothed_progress += (phase - m_smoothed_progress) * smoothing_factor;
     }
 
-    if (m_smoothed_progress <= 0.001f && phase <= 0.001f) {
+    if (m_smoothed_progress <= 0.0001f && phase <= 0.0001f) {
         std::fill(buffer, buffer + total_bytes, 0);
         std::fill(m_previous_frame_buffer.begin(), m_previous_frame_buffer.end(), 0);
         m_smoothed_progress = 0.0f;
@@ -124,7 +123,15 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
 
     float p = clampf(m_smoothed_progress, 0.0f, 1.0f);
     float cloud_dimming = 1.0f - (clampf(cloud_density, 0.0f, 1.0f) * 0.30f);
-    float global_brightness_scale = (p * p * (3.0f - 2.0f * p)) * cloud_dimming;
+    float global_brightness_scale = (p < 0.05f) ? (p * 4.0f * cloud_dimming) : (p * p * (3.0f - 2.0f * p)) * cloud_dimming;
+
+    // --- Graceful Final-LED Tail Fade Multiplier ---
+    // Smoothly scales the last remaining pixels down to absolute zero as progress approaches 0.0
+    float final_tail_fade = 1.0f;
+    if (m_smoothed_progress < 0.10f) {
+        float t = clampf(m_smoothed_progress / 0.10f, 0.0f, 1.0f);
+        final_tail_fade = t * t; // Quadratic taper to zero for the last surviving LEDs
+    }
 
     for (size_t y = 0; y < height; ++y) {
         for (size_t x = 0; x < width; ++x) {
@@ -151,7 +158,6 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
             }
 
             float pixel_phase = 0.0f;
-            // Force all LEDs fully turned on when sunset start begins
             if (m_smoothed_progress >= 0.999f) {
                 pixel_phase = 1.0f;
             } else if (current_wave_radius > 0.001f) {
@@ -162,9 +168,10 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
 
             ColorRGB rgb = getSunsetColor(pixel_phase);
 
-            float norm_r = rgb.r * global_brightness_scale / 255.0f;
-            float norm_g = rgb.g * global_brightness_scale / 255.0f;
-            float norm_b = rgb.b * global_brightness_scale / 255.0f;
+            // Apply global scale and the final tail fade multiplier to the last LEDs
+            float norm_r = rgb.r * global_brightness_scale * final_tail_fade / 255.0f;
+            float norm_g = rgb.g * global_brightness_scale * final_tail_fade / 255.0f;
+            float norm_b = rgb.b * global_brightness_scale * final_tail_fade / 255.0f;
 
             norm_r = std::pow(norm_r, 1.8f);
             norm_g = std::pow(norm_g, 1.8f);
@@ -186,9 +193,10 @@ void SunsetEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height,
                 uint8_t prev_g = m_previous_frame_buffer[pixel_index + 1];
                 uint8_t prev_b = m_previous_frame_buffer[pixel_index + 2];
 
-                final_r = static_cast<uint8_t>(prev_r + (static_cast<float>(target_r - prev_r) * 0.45f));
-                final_g = static_cast<uint8_t>(prev_g + (static_cast<float>(target_g - prev_g) * 0.45f));
-                final_b = static_cast<uint8_t>(prev_b + (static_cast<float>(target_b - prev_b) * 0.45f));
+                float blend_speed = (m_smoothed_progress < 0.1f) ? 0.25f : 0.45f;
+                final_r = static_cast<uint8_t>(prev_r + (static_cast<float>(target_r - prev_r) * blend_speed));
+                final_g = static_cast<uint8_t>(prev_g + (static_cast<float>(target_g - prev_g) * blend_speed));
+                final_b = static_cast<uint8_t>(prev_b + (static_cast<float>(target_b - prev_b) * blend_speed));
             }
 
             buffer[pixel_index]     = final_r;

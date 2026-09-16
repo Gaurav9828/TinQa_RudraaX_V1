@@ -68,7 +68,6 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
         return; 
     }
 
-    // Adjust direction vector: mirror it during dusk to copy sunset direction flow
     float active_dir_deg = Config::EAST_DIRECTION_DEGREES;
     if (is_dusk) {
         active_dir_deg -= 180.0f; // Mirror direction for sunset ending

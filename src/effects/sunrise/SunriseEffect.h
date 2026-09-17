@@ -27,11 +27,12 @@ private:
     struct ColorRGB {
         float r, g, b;
     };
-
+    ColorRGB getSunriseColor(float phase) const;
     void parseConfig();
     void updateDirectionVector(float direction_degrees);
     ColorRGB getAlpenglowColor(float phase) const;
     static float clampf(float val, float min_val, float max_val);
+    
 
 private:
     std::vector<std::pair<size_t, size_t>> m_peak_coordinates;

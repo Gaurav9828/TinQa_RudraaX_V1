@@ -39,33 +39,42 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
 
     double sunrise = ctx.weather.sunrise_hour;
     double sunset = ctx.weather.sunset_hour;
-    double twilight_dur = ctx.weather.redness_duration_hours;
+    double twilight_dur = ctx.weather.redness_duration_hours; // 30 mins (Winter) or 40 mins (Summer)
 
-    double dawn_start = sunrise - twilight_dur;
-    double dawn_end = sunrise + 3.0; 
-    double dusk_start = sunset - 3.0;
-    double dusk_end = sunset + twilight_dur;
+    // --- SYNCHRONIZED TIMELINE MAPPING ---
+    // Dawn starts at official sunrise and overlaps across the redness duration until sunrise + twilight_dur
+    double dawn_start = sunrise;
+    double dawn_end = sunrise + twilight_dur; 
+    
+    // Dusk mirrors sunrise, starting at sunset - twilight_dur and ending at sunset
+    double dusk_start = sunset - twilight_dur;
+    double dusk_end = sunset;
 
     float global_daylight = 0.0f;
     float spatial_expand_progress = 1.0f;
     bool is_dusk = false;
 
-    if (ctx.current_hour >= dawn_start && ctx.current_hour < dawn_end) {
+    if (ctx.current_hour < sunrise || ctx.current_hour > sunset) {
+        return; // Night time - fully handled by night layers / alpenglow
+    }
+
+    if (ctx.current_hour >= dawn_start && ctx.current_hour <= dawn_end) {
+        // Overlapping ramp-up matching the tail end of the sunrise effect
         float progress = static_cast<float>((ctx.current_hour - dawn_start) / (dawn_end - dawn_start));
         global_daylight = smoothstep(0.0f, 1.0f, progress);
         spatial_expand_progress = smoothstep(0.0f, 1.0f, progress);
     } 
-    else if (ctx.current_hour >= dawn_end && ctx.current_hour <= dusk_start) {
+    else if (ctx.current_hour > dawn_end && ctx.current_hour < dusk_start) {
+        // Full daytime window
         global_daylight = 1.0f;
         spatial_expand_progress = 1.0f;
     } 
-    else if (ctx.current_hour > dusk_start && ctx.current_hour <= dusk_end) {
+    else if (ctx.current_hour >= dusk_start && ctx.current_hour <= dusk_end) {
+        // Overlapping ramp-down matching the sunset effect window
         float progress = static_cast<float>((ctx.current_hour - dusk_start) / (dusk_end - dusk_start));
         global_daylight = 1.0f - smoothstep(0.0f, 1.0f, progress);
         spatial_expand_progress = 1.0f - smoothstep(0.0f, 1.0f, progress);
         is_dusk = true; // Mark as ending phase to mirror direction
-    } else {
-        return; 
     }
 
     float active_dir_deg = Config::EAST_DIRECTION_DEGREES;
@@ -108,9 +117,8 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
     const uint8_t base_g = static_cast<uint8_t>(clampf(day_g * cloud_day_factor * global_daylight, 0.0f, 255.0f));
     const uint8_t base_b = static_cast<uint8_t>(clampf(day_b * cloud_day_factor * global_daylight, 0.0f, 255.0f));
 
-    // --- GRADUAL SPATIAL WAVE MASK (Fixed Starting Jump) ---
+    // --- GRADUAL SPATIAL WAVE MASK ---
     float max_possible_dist = std::hypot(static_cast<float>(width), static_cast<float>(height));
-    // Smoother scaling curve for gradual LED illumination
     float current_wave_radius = spatial_expand_progress * max_possible_dist * 2.2f;
 
     int matrix_width = static_cast<int>(width);
@@ -142,7 +150,6 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
             float spatial_mask = 1.0f;
             if (spatial_expand_progress < 1.0f) {
                 float wave_delta = current_wave_radius - min_effective_dist;
-                // Wider divisor band ensures gradual, slow individual LED turn-on transitions
                 spatial_mask = clampf(wave_delta / (max_possible_dist * 0.75f), 0.0f, 1.0f);
                 spatial_mask = spatial_mask * spatial_mask * (3.0f - 2.0f * spatial_mask);
             }
@@ -163,7 +170,7 @@ void SolarLightingLayer::render(uint8_t* buffer, size_t width, size_t height, co
     // --- Sun Entity Cluster ---
     if (ctx.current_hour >= sunrise && ctx.current_hour <= sunset) {
         float sun_visibility = 1.0f;
-        double sun_fade_duration = 3.0; 
+        double sun_fade_duration = 0.5; 
         if (ctx.current_hour >= sunrise && ctx.current_hour <= (sunrise + sun_fade_duration)) {
             sun_visibility = smoothstep(static_cast<float>(sunrise), static_cast<float>(sunrise + sun_fade_duration), static_cast<float>(ctx.current_hour));
         } else if (ctx.current_hour >= (sunset - sun_fade_duration) && ctx.current_hour <= sunset) {

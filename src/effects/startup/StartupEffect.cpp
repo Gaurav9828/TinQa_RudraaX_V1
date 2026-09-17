@@ -85,7 +85,7 @@ void StartupEffect::render(uint8_t* buffer, size_t width, size_t height) {
     }
 
     // =========================================================================
-    // PHASE 3: FAST METEOR & RAPID ACCELERATION + EXPANDING WAVE BOOM (5.0s to 8.0s)
+    // PHASE 3: DISTANT APPROACH METEOR & EXPANDING WAVE BOOM (5.0s to 8.0s)
     // =========================================================================
     float meteor_time = total_seconds - 5.0f; // 0.0 to 3.0 seconds window
     float linear_progress = meteor_time / 3.0f;
@@ -97,6 +97,11 @@ void StartupEffect::render(uint8_t* buffer, size_t width, size_t height) {
     float max_y = static_cast<float>(height - 1);
 
     const int tail_length = std::max(6, static_cast<int>(width / 3));
+
+    // Global approach envelope: fades in smoothly from 0.0 to full brightness 
+    // over the first 35% of its travel so it genuinely looks like it's approaching from afar.
+    float approach_envelope = std::clamp(linear_progress / 0.35f, 0.0f, 1.0f);
+    approach_envelope = approach_envelope * approach_envelope; // Smooth quad curve entry
 
     for (int i = tail_length; i >= 0; --i) {
         float tail_offset = static_cast<float>(i) * 0.06f;
@@ -144,7 +149,8 @@ void StartupEffect::render(uint8_t* buffer, size_t width, size_t height) {
         intensity = std::clamp(intensity, 0.0f, 1.0f);
         if (i == 0) intensity = 1.3f; 
 
-        intensity *= 0.35f; 
+        // Multiply by the distance approach envelope so it fades up smoothly from deep space
+        intensity *= 0.35f * approach_envelope; 
 
         size_t idx = (iy * width + ix) * 3;
         buffer[idx + 0] = std::min(255, static_cast<int>(buffer[idx + 0] + r * intensity));

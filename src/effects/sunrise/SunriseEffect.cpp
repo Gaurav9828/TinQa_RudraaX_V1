@@ -34,29 +34,16 @@ float SunriseEffect::clampf(float val, float min_val, float max_val) {
     return std::max(min_val, std::min(max_val, val));
 }
 
-SunriseEffect::ColorRGB SunriseEffect::getAlpenglowColor(float phase) const {
+SunriseEffect::ColorRGB SunriseEffect::getSunriseColor(float phase) const {
     phase = clampf(phase, 0.0f, 1.0f);
 
-    const ColorRGB COLOR_OFF           = {  0.0f,   0.0f,   0.0f};
     const ColorRGB COLOR_DEEP_RED      = {220.0f,  15.0f,   0.0f}; 
     const ColorRGB COLOR_GOLDEN_RED    = {255.0f,  65.0f,   0.0f}; 
     const ColorRGB COLOR_GOLDEN_YELLOW = {255.0f, 150.0f,  10.0f}; 
     const ColorRGB COLOR_SOLAR_START   = {255.0f, 140.0f,  40.0f}; 
 
-    if (phase <= 0.01f) {
-        return COLOR_OFF;
-    } 
-    else if (phase < 0.25f) {
+    if (phase < 0.25f) {
         float t = phase / 0.25f;
-        t = t * t * (3.0f - 2.0f * t);
-        return {
-            COLOR_DEEP_RED.r * t,
-            COLOR_DEEP_RED.g * t,
-            COLOR_DEEP_RED.b * t
-        };
-    } 
-    else if (phase < 0.50f) {
-        float t = (phase - 0.25f) / 0.25f;
         t = t * t * (3.0f - 2.0f * t);
         return {
             COLOR_DEEP_RED.r + (COLOR_GOLDEN_RED.r - COLOR_DEEP_RED.r) * t,
@@ -64,8 +51,8 @@ SunriseEffect::ColorRGB SunriseEffect::getAlpenglowColor(float phase) const {
             COLOR_DEEP_RED.b + (COLOR_GOLDEN_RED.b - COLOR_DEEP_RED.b) * t
         };
     } 
-    else if (phase < 0.80f) {
-        float t = (phase - 0.50f) / 0.30f;
+    else if (phase < 0.65f) {
+        float t = (phase - 0.25f) / 0.40f;
         t = t * t * (3.0f - 2.0f * t);
         return {
             COLOR_GOLDEN_RED.r + (COLOR_GOLDEN_YELLOW.r - COLOR_GOLDEN_RED.r) * t,
@@ -74,7 +61,7 @@ SunriseEffect::ColorRGB SunriseEffect::getAlpenglowColor(float phase) const {
         };
     }
     else {
-        float t = (phase - 0.80f) / 0.20f;
+        float t = (phase - 0.65f) / 0.35f;
         t = t * t * (3.0f - 2.0f * t);
         return {
             COLOR_GOLDEN_YELLOW.r + (COLOR_SOLAR_START.r - COLOR_GOLDEN_YELLOW.r) * t,
@@ -102,10 +89,10 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
         m_previous_frame_buffer.resize(total_bytes, 0);
     }
 
-    float smoothing_factor = 0.25f; 
+    float smoothing_factor = 0.5f; 
     m_smoothed_progress += (phase - m_smoothed_progress) * smoothing_factor;
 
-    if (m_smoothed_progress <= 0.01f && phase <= 0.01f) {
+    if (m_smoothed_progress <= 0.0001f && phase <= 0.0001f) {
         std::fill(buffer, buffer + total_bytes, 0);
         std::fill(m_previous_frame_buffer.begin(), m_previous_frame_buffer.end(), 0);
         m_smoothed_progress = 0.0f;
@@ -115,7 +102,12 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
     updateDirectionVector(direction_degrees);
 
     float max_possible_dist = std::hypot(static_cast<float>(width), static_cast<float>(height));
-    float current_wave_radius = m_smoothed_progress * max_possible_dist * 2.0f;
+
+    const ColorRGB COLOR_VIOLET_INDIGO = {35.0f, 22.0f, 55.0f}; // Dimmed soft shade
+
+    // Sunrise wave radius calculations (starts expanding once progress > 0.2727)
+    float sunrise_wave_progress = (m_smoothed_progress > 0.2727f) ? (m_smoothed_progress - 0.2727f) / (1.0f - 0.2727f) : 0.0f;
+    float current_wave_radius = sunrise_wave_progress * max_possible_dist * 2.0f;
 
     float cloud_dimming = 1.0f - (clampf(cloud_density, 0.0f, 1.0f) * 0.30f);
     float global_brightness_scale = (0.20f + (m_smoothed_progress * 0.80f)) * cloud_dimming;
@@ -144,17 +136,33 @@ void SunriseEffect::renderWithPhase(uint8_t* buffer, size_t width, size_t height
                 }
             }
 
-            float pixel_phase = 0.0f;
-            // Force all LEDs fully turned on when sunrise completion is reached
-            if (m_smoothed_progress >= 0.999f) {
-                pixel_phase = 1.0f;
-            } else if (current_wave_radius > 0.001f) {
-                float wave_delta = current_wave_radius - min_effective_dist;
-                pixel_phase = clampf(wave_delta / (max_possible_dist * 0.5f), 0.0f, 1.0f);
-                pixel_phase = pixel_phase * pixel_phase * (3.0f - 2.0f * pixel_phase);
-            }
+            ColorRGB rgb = {0.0f, 0.0f, 0.0f};
 
-            ColorRGB rgb = getAlpenglowColor(pixel_phase);
+            // 1. Check if the sunrise red wave has reached this pixel
+            if (m_smoothed_progress > 0.2727f && current_wave_radius > min_effective_dist) {
+                float wave_delta = current_wave_radius - min_effective_dist;
+                float pixel_sunrise_phase = clampf(wave_delta / (max_possible_dist * 0.4f), 0.0f, 1.0f);
+                pixel_sunrise_phase = pixel_sunrise_phase * pixel_sunrise_phase * (3.0f - 2.0f * pixel_sunrise_phase);
+                
+                // Sunrise red/gold overrides the background
+                rgb = getSunriseColor(pixel_sunrise_phase);
+            } 
+            else {
+                // 2. Sparse Alpenglow Background (~3% of pixels distributed evenly, approx 30 LEDs on a 32x32 matrix)
+                uint32_t pixel_hash = (static_cast<uint32_t>(x) * 73856093u) ^ (static_cast<uint32_t>(y) * 19349663u);
+                if ((pixel_hash % 100u) < 3u) {
+                    // Ramp intensity from 0 up to minimal brightness during the 15-min alpenglow window (0 to 0.2727),
+                    // then hold steady at max dimness until the sunrise wave overrides it.
+                    float ramp_progress = clampf(m_smoothed_progress / 0.2727f, 0.0f, 1.0f);
+                    ramp_progress = ramp_progress * ramp_progress * (3.0f - 2.0f * ramp_progress);
+
+                    rgb = {
+                        COLOR_VIOLET_INDIGO.r * ramp_progress,
+                        COLOR_VIOLET_INDIGO.g * ramp_progress,
+                        COLOR_VIOLET_INDIGO.b * ramp_progress
+                    };
+                }
+            }
 
             rgb.r *= global_brightness_scale;
             rgb.g *= global_brightness_scale;

@@ -224,20 +224,23 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
     // 2. UNIFIED DYNAMIC TIME-BASED SUNRISE & SUNSET OVERLAYS
     double sunrise = weather.sunrise_hour;
     double sunset = weather.sunset_hour;
-    double twilight_dur = weather.redness_duration_hours;
+    double sunrise_dur = weather.redness_duration_hours;
 
-    double sunrise_start = sunrise - twilight_dur;
-    double sunrise_end = sunrise + 2.5;
+    double sunrise_start = sunrise - sunrise_dur;
+    double sunrise_end = sunrise + sunrise_dur;
 
     if (current_hour >= sunrise_start && current_hour <= sunrise_end) {
         float progress = static_cast<float>((current_hour - sunrise_start) / (sunrise_end - sunrise_start));
         progress = std::clamp(progress, 0.0f, 1.0f);
         
+        // Weight curve across the entire 55-minute window
         float weight = 0.0f;
-        if (progress <= 0.5f) {
-            weight = smoothstep(0.0f, 1.0f, progress / 0.5f);
+        if (progress <= 0.05f) {
+            weight = smoothstep(0.0f, 1.0f, progress / 0.05f); // Quicker 3-minute fade-in
+        } else if (progress >= 0.95f) {
+            weight = 1.0f - smoothstep(0.0f, 1.0f, (progress - 0.95f) / 0.05f);
         } else {
-            weight = 1.0f - smoothstep(0.0f, 1.0f, (progress - 0.5f) / 0.5f);
+            weight = 1.0f;
         }
 
         m_sunrise_effect.renderWithPhase(
@@ -251,8 +254,8 @@ void AutoEffect::render(uint8_t* buffer, size_t width, size_t height) {
         }
     }
 
-    double sunset_start = sunset - 2.5;
-    double sunset_end = sunset + twilight_dur;
+    double sunset_start = sunset - sunrise_dur;
+    double sunset_end = sunset + sunrise_dur;
 
     if (current_hour >= sunset_start && current_hour <= sunset_end) {
         float progress = static_cast<float>((current_hour - sunset_start) / (sunset_end - sunset_start));

@@ -291,6 +291,7 @@ int main()
 
         if (deltaMs > 500) deltaMs = 16;
 
+        updateSystemClock(deltaMs);
         // Run background scheduling checks (auto-diagnosis on 20th & 21st reminders)
         healthCheckManager.update(deltaMs, ambientSensor, touchDriver, hardwareMatrix);
 
